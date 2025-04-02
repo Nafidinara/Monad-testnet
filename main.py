@@ -143,6 +143,14 @@ async def run_madness(language: str):
     from scripts.madness import run as madness_run
     await madness_run(language)
 
+async def run_flapdotsh(language: str):
+    from scripts.flapdotsh import run as flapdotsh_run
+    await flapdotsh_run(language)
+
+async def run_multiplifi(language: str):
+    from scripts.multiplifi import run as multiplifi_run
+    await multiplifi_run(language)
+
 # Danh sách script với ánh xạ trực tiếp
 SCRIPT_MAP = {
     "rubic": run_rubic,
@@ -164,6 +172,8 @@ SCRIPT_MAP = {
     "frontrunner": run_frontrunner,
     "octoswap": run_octoswap,
     "madness": run_madness,
+    "flapdotsh": run_flapdotsh,
+    "multiplifi": run_multiplifi,
     "exit": lambda language: sys.exit(0)
 }
 
@@ -190,9 +200,11 @@ def get_available_scripts(language):
 
             {"name": "18. Octo Swap x Monad Testnet", "value": "octoswap"},
             {"name": "19. Madness Swap x Monad Testnet", "value": "madness"},
+            {"name": "20. Flapdotsh Swap x Monad Testnet", "value": "flapdotsh"},
+            {"name": "21. Multipli Stake x Monad Testnet", "value": "multiplifi"},
 
             
-            {"name": "18. Thoát", "value": "exit"},
+            {"name": "22. Thoát", "value": "exit"},
         ],
         'en': [
             {"name": "1. Rubic Swap x Monad Testnet", "value": "rubic"},
@@ -215,9 +227,10 @@ def get_available_scripts(language):
 
             {"name": "18. Octo Swap x Monad Testnet", "value": "octoswap"},
             {"name": "19. Madness Swap x Monad Testnet", "value": "madness"},
-
+            {"name": "20. Flapdotsh Swap x Monad Testnet", "value": "flapdotsh"},
+            {"name": "21. Multipli Stake x Monad Testnet", "value": "multiplifi"},
             
-            {"name": "18. Exit", "value": "exit"},
+            {"name": "22. Exit", "value": "exit"},
         ]
     }
     return scripts[language]
