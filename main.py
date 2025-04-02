@@ -133,6 +133,14 @@ async def run_frontrunner(language: str):
     from scripts.frontrunner import run as run_frontrunner
     await run_frontrunner(language)
 
+async def run_octoswap(language: str):
+    from scripts.octoswap import run as octoswap_run
+    await octoswap_run(language)
+
+async def run_madness(language: str):
+    from scripts.madness import run as madness_run
+    await madness_run(language)
+
 # Danh sách script với ánh xạ trực tiếp
 SCRIPT_MAP = {
     "rubic": run_rubic,
@@ -152,6 +160,8 @@ SCRIPT_MAP = {
     "naddomains": run_naddomains,
     "shmonad": run_shmonad,
     "frontrunner": run_frontrunner,
+    "octoswap": run_octoswap,
+    "madness": run_madness,
     "exit": lambda language: sys.exit(0)
 }
 
@@ -175,7 +185,11 @@ def get_available_scripts(language):
             {"name": "15. Nad Domains x Monad Testnet", "value": "naddomains"},
             {"name": "16. Shmonad x Monad Testnet", "value": "shmonad"},
             {"name": "17. Chơi Frontrunner ( Shmonad ) x Monad Testnet", "value": "frontrunner"},
-            {"name": "18. Thoát", "value": "exit"},
+            {"name": "18. Octo Swap x Monad Testnet", "value": "octoswap"},
+            {"name": "19. Madness Swap x Monad Testnet", "value": "madness"},
+
+            
+            {"name": "20. Thoát", "value": "exit"},
         ],
         'en': [
             {"name": "1. Rubic Swap x Monad Testnet", "value": "rubic"},
@@ -195,7 +209,11 @@ def get_available_scripts(language):
             {"name": "15. Nad Domains x Monad Testnet", "value": "naddomains"},
             {"name": "16. Shmonad x Monad Testnet", "value": "shmonad"},
             {"name": "17. Play Frontrunner ( Shmonad ) x Monad Testnet", "value": "frontrunner"},
-            {"name": "18. Exit", "value": "exit"},
+            {"name": "18. Octo Swap x Monad Testnet", "value": "octoswap"},
+            {"name": "19. Madness Swap x Monad Testnet", "value": "madness"},
+
+            
+            {"name": "20. Exit", "value": "exit"},
         ]
     }
     return scripts[language]
