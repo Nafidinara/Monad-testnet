@@ -37,9 +37,11 @@ def _banner():
     print(f"{Fore.GREEN}{banner:^80}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'═' * BORDER_WIDTH}{Style.RESET_ALL}")
     print_border("MONAD TESTNET", Fore.GREEN)
-    print(f"{Fore.YELLOW}│ {'Liên hệ / Contact'}: {Fore.CYAN}https://t.me/thog099{Style.RESET_ALL:^76}│")
-    print(f"{Fore.YELLOW}│ {'Replit'}: {Fore.CYAN}Thog{Style.RESET_ALL:^76}│")
+    print(f"{Fore.YELLOW}│ {'Liên hệ / Contact'}: {Fore.CYAN}https://t.me/thog099{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Replit'}: {Fore.CYAN}Thog{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Channel Telegram'}: {Fore.CYAN}https://t.me/thogairdrops{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'═' * BORDER_WIDTH}{Style.RESET_ALL}")
+
 
 # Hàm xóa màn hình
 def _clear():
@@ -185,11 +187,12 @@ def get_available_scripts(language):
             {"name": "15. Nad Domains x Monad Testnet", "value": "naddomains"},
             {"name": "16. Shmonad x Monad Testnet", "value": "shmonad"},
             {"name": "17. Chơi Frontrunner ( Shmonad ) x Monad Testnet", "value": "frontrunner"},
+
             {"name": "18. Octo Swap x Monad Testnet", "value": "octoswap"},
             {"name": "19. Madness Swap x Monad Testnet", "value": "madness"},
 
             
-            {"name": "20. Thoát", "value": "exit"},
+            {"name": "18. Thoát", "value": "exit"},
         ],
         'en': [
             {"name": "1. Rubic Swap x Monad Testnet", "value": "rubic"},
@@ -209,11 +212,12 @@ def get_available_scripts(language):
             {"name": "15. Nad Domains x Monad Testnet", "value": "naddomains"},
             {"name": "16. Shmonad x Monad Testnet", "value": "shmonad"},
             {"name": "17. Play Frontrunner ( Shmonad ) x Monad Testnet", "value": "frontrunner"},
+
             {"name": "18. Octo Swap x Monad Testnet", "value": "octoswap"},
             {"name": "19. Madness Swap x Monad Testnet", "value": "madness"},
 
             
-            {"name": "20. Exit", "value": "exit"},
+            {"name": "18. Exit", "value": "exit"},
         ]
     }
     return scripts[language]
