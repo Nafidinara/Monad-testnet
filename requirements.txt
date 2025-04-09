@@ -5,3 +5,5 @@ py-solc-x
 eth-account
 aiohttp
 loguru   
+faker
+primp

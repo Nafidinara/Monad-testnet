@@ -59,6 +59,8 @@ LANG = {
         'invalid_amount': 'Số lượng không hợp lệ hoặc vượt quá số dư',
         'times_prompt': 'Nhập số lần mua',
         'invalid_times': 'Số lần không hợp lệ, vui lòng nhập số nguyên dương',
+        'auto_selected': 'Đã chọn tự động',
+        'insufficient_for_auto': 'Số dư không đủ để tự động swap',
     },
     'en': {
         'title': 'FLAPSH SWAP - MONAD TESTNET',
@@ -95,6 +97,8 @@ LANG = {
         'invalid_amount': 'Invalid amount or exceeds balance',
         'times_prompt': 'Enter number of buys',
         'invalid_times': 'Invalid number, please enter a positive integer',
+        'auto_selected': 'Auto-selected',
+        'insufficient_for_auto': 'Insufficient balance for auto swap',
     }
 }
 
@@ -175,80 +179,111 @@ def check_balance(w3: Web3, address: str, language: str = 'en') -> float:
         print(f"{Fore.YELLOW}  ⚠ {LANG[language]['error']}: {str(e)}{Style.RESET_ALL}")
         return -1
 
+def get_auto_buy_params(w3, address, language):
+    # Cek saldo
+    balance = check_balance(w3, address, language)
+    if balance <= 0.01:  # Minimal balance untuk operasi
+        return 0, 0
+    
+    # Estimasi gas cost
+    gas_price = w3.eth.gas_price
+    gas_cost_estimate = float(w3.from_wei(gas_price * DEFAULT_GAS, "ether"))
+    
+    # Hitung jumlah maksimal yang bisa digunakan (balance - gas_cost_estimate)
+    max_amount = balance - gas_cost_estimate
+    
+    if max_amount <= 0:
+        return 0, 0
+    
+    # Hitung jumlah random antara 10-20% dari max_amount
+    amount = max_amount * random.uniform(0.1, 0.2)
+    amount = round(amount, 4)  # Round to 4 decimal places
+    
+    # Random jumlah transaksi (1-2)
+    swap_times = random.randint(1, 2)
+    
+    return amount, swap_times
+
 # Hàm thực hiện mua từ contract
 async def buy_from_contract(w3: Web3, private_key: str, amount: float, swap_times: int, language: str = 'en'):
     account = Account.from_key(private_key)
     sender_address = Web3.to_checksum_address(account.address)
     
     successful_swaps = 0
-    nonce = w3.eth.get_transaction_count(sender_address, 'pending')
     
     for i in range(swap_times):
-        print_border(f"Buy {i+1}/{swap_times}: {TOKEN_ADDRESS}", Fore.YELLOW)
-        print(f"{Fore.CYAN}  > {LANG[language]['checking_balance']}{Style.RESET_ALL}")
-        
-        balance = check_balance(w3, sender_address, language)
-        gas_price = w3.eth.gas_price
-        gas_cost_estimate = float(w3.from_wei(gas_price * DEFAULT_GAS, "ether"))
-        if balance < amount + gas_cost_estimate:
-            print(f"{Fore.RED}  ✖ {LANG[language]['insufficient_balance']}: {balance:.4f} MON < {amount + gas_cost_estimate:.4f}{Style.RESET_ALL}")
-            break
-        
-        amount_wei = w3.to_wei(amount, "ether")
-        
-        print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']}{Style.RESET_ALL}")
-        # Hàm buy: tokenAddress, recipient, amountOutMin
-        function_selector = "0x153e66e6"
-        token_param = TOKEN_ADDRESS.replace("0x", "").zfill(64)  # Token muốn mua
-        recipient_param = sender_address.replace("0x", "").zfill(64)
-        min_amount_param = "0".zfill(64)  # Số lượng tối thiểu token nhận
-        
-        data = function_selector + token_param + recipient_param + min_amount_param
-        
-        tx_params = {
-            "from": sender_address,
-            "to": SWAP_CONTRACT_ADDRESS,  # Router
-            "value": amount_wei,  # Số MON gửi
-            "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
-            "nonce": nonce,
-            "data": data,
-            "chainId": CHAIN_ID,
-        }
-        
         try:
-            estimated_gas = w3.eth.estimate_gas(tx_params)
-            tx_params['gas'] = int(estimated_gas * 1.2)
-        except Exception as e:
-            tx_params['gas'] = DEFAULT_GAS
-            print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
-        
-        print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']}{Style.RESET_ALL}")
-        signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
-        
-        try:
-            receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
-            if receipt.status == 1:
-                successful_swaps += 1
-                mon_balance = check_balance(w3, sender_address, language)
-                print(f"{Fore.GREEN}  ✔ {LANG[language]['success'].format(amount=amount)} │ Tx: {tx_link}{Style.RESET_ALL}")
-                print(f"{Fore.YELLOW}    {LANG[language]['address']:<12}: {sender_address}{Style.RESET_ALL}")
-                print(f"{Fore.YELLOW}    {LANG[language]['block']:<12}: {receipt['blockNumber']}{Style.RESET_ALL}")
-                print(f"{Fore.YELLOW}    {LANG[language]['gas']:<12}: {receipt['gasUsed']}{Style.RESET_ALL}")
-                print(f"{Fore.YELLOW}    {LANG[language]['balance']:<12}: {mon_balance:.4f} MON{Style.RESET_ALL}")
-            else:
-                reason = "Transaction reverted"  # Cần ABI để decode revert reason
-                print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=reason)} │ Tx: {tx_link}{Style.RESET_ALL}")
-        except Exception as e:
-            print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
-            break
-        
-        nonce += 1
-        if i < swap_times - 1:
-            delay = random.uniform(5, 15)
-            print(f"{Fore.YELLOW}    {LANG[language]['pausing']} {delay:.2f} {'giây' if language == 'vi' else 'seconds'}{Style.RESET_ALL}")
-            await asyncio.sleep(delay)
+            # Get updated nonce for each transaction
+            nonce = w3.eth.get_transaction_count(sender_address, 'pending')
+            
+            print_border(f"Buy {i+1}/{swap_times}: {TOKEN_ADDRESS}", Fore.YELLOW)
+            print(f"{Fore.CYAN}  > {LANG[language]['checking_balance']}{Style.RESET_ALL}")
+            
+            balance = check_balance(w3, sender_address, language)
+            gas_price = w3.eth.gas_price
+            gas_cost_estimate = float(w3.from_wei(gas_price * DEFAULT_GAS, "ether"))
+            if balance < amount + gas_cost_estimate:
+                print(f"{Fore.RED}  ✖ {LANG[language]['insufficient_balance']}: {balance:.4f} MON < {amount + gas_cost_estimate:.4f}{Style.RESET_ALL}")
+                break
+            
+            amount_wei = w3.to_wei(amount, "ether")
+            
+            print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']}{Style.RESET_ALL}")
+            # Hàm buy: tokenAddress, recipient, amountOutMin
+            function_selector = "0x153e66e6"
+            token_param = TOKEN_ADDRESS.replace("0x", "").zfill(64)  # Token muốn mua
+            recipient_param = sender_address.replace("0x", "").zfill(64)
+            min_amount_param = "0".zfill(64)  # Số lượng tối thiểu token nhận
+            
+            data = function_selector + token_param + recipient_param + min_amount_param
+            
+            tx_params = {
+                "from": sender_address,
+                "to": SWAP_CONTRACT_ADDRESS,  # Router
+                "value": amount_wei,  # Số MON gửi
+                "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
+                "nonce": nonce,
+                "data": data,
+                "chainId": CHAIN_ID,
+            }
+            
+            try:
+                estimated_gas = w3.eth.estimate_gas(tx_params)
+                tx_params['gas'] = int(estimated_gas * 1.2)
+            except Exception as e:
+                tx_params['gas'] = DEFAULT_GAS
+                print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
+            
+            print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']}{Style.RESET_ALL}")
+            signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
+            
+            try:
+                receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
+                if receipt.status == 1:
+                    successful_swaps += 1
+                    mon_balance = check_balance(w3, sender_address, language)
+                    print(f"{Fore.GREEN}  ✔ {LANG[language]['success'].format(amount=amount)} │ Tx: {tx_link}{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}    {LANG[language]['address']:<12}: {sender_address}{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}    {LANG[language]['block']:<12}: {receipt['blockNumber']}{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}    {LANG[language]['gas']:<12}: {receipt['gasUsed']}{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}    {LANG[language]['balance']:<12}: {mon_balance:.4f} MON{Style.RESET_ALL}")
+                else:
+                    reason = "Transaction reverted"  # Cần ABI để decode revert reason
+                    print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=reason)} │ Tx: {tx_link}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
+                continue  # Skip to next iteration instead of breaking
+            
+            if i < swap_times - 1:
+                delay = random.uniform(5, 15)
+                print(f"{Fore.YELLOW}    {LANG[language]['pausing']} {delay:.2f} {'giây' if language == 'vi' else 'seconds'}{Style.RESET_ALL}")
+                await asyncio.sleep(delay)
+                
+        except Exception as general_error:
+            print_border(f"{LANG[language]['error']}: {str(general_error)}", Fore.RED)
+            continue  # Skip this swap but continue with the next one
     
     return successful_swaps
 
@@ -273,43 +308,33 @@ async def run(language: str = 'en'):
 
     random.shuffle(private_keys)
     for i, (profile_num, private_key) in enumerate(private_keys, 1):
-        print_border(f"{LANG[language]['processing_wallet']} {profile_num} ({i}/{len(private_keys)})", Fore.MAGENTA)
-        account = Account.from_key(private_key)
-        print(f"{Fore.YELLOW}  {LANG[language]['address']}: {account.address}{Style.RESET_ALL}")
-        balance = check_balance(w3, account.address, language)
-        print(f"{Fore.YELLOW}  {LANG[language]['balance']}: {balance:.4f} MON{Style.RESET_ALL}")
-        print_separator()
+        try:
+            print_border(f"{LANG[language]['processing_wallet']} {profile_num} ({i}/{len(private_keys)})", Fore.MAGENTA)
+            account = Account.from_key(private_key)
+            print(f"{Fore.YELLOW}  {LANG[language]['address']}: {account.address}{Style.RESET_ALL}")
+            balance = check_balance(w3, account.address, language)
+            print(f"{Fore.YELLOW}  {LANG[language]['balance']}: {balance:.4f} MON{Style.RESET_ALL}")
+            print_separator()
+            
+            # Otomatis menentukan jumlah dan kali swap
+            amount, swap_times = get_auto_buy_params(w3, account.address, language)
+            
+            if amount <= 0 or swap_times <= 0:
+                print(f"{Fore.RED}  ✖ {LANG[language]['insufficient_balance']} for auto swap{Style.RESET_ALL}")
+                continue
+            
+            print(f"{Fore.CYAN}  Auto-selected: Amount: {amount:.4f} MON, Times: {swap_times}{Style.RESET_ALL}")
+            
+            # Lakukan swap
+            swaps = await buy_from_contract(w3, private_key, amount, swap_times, language)
+            successful_swaps += swaps
+            total_swaps += swap_times
 
-        print()
-        while True:
-            gas_price = w3.eth.gas_price
-            gas_cost_estimate = float(w3.from_wei(gas_price * DEFAULT_GAS, "ether"))
-            print(f"{Fore.CYAN}{LANG[language]['amount_prompt']} {Fore.YELLOW}(Max: {balance - gas_cost_estimate:.4f} MON):{Style.RESET_ALL}")
-            try:
-                amount_input = float(input(f"{Fore.GREEN}  > {Style.RESET_ALL}"))
-                if amount_input > 0 and amount_input <= balance - gas_cost_estimate:
-                    amount = amount_input
-                    break
-                print(f"{Fore.RED}  ✖ {LANG[language]['invalid_amount']} (bao gồm phí gas ước tính: {gas_cost_estimate:.4f} MON){Style.RESET_ALL}")
-            except ValueError:
-                print(f"{Fore.RED}  ✖ {LANG[language]['invalid_amount']}{Style.RESET_ALL}")
-
-        print()
-        while True:
-            print(f"{Fore.CYAN}{LANG[language]['times_prompt']}:{Style.RESET_ALL}")
-            try:
-                swap_times = int(input(f"{Fore.GREEN}  > {Style.RESET_ALL}"))
-                if swap_times > 0:
-                    break
-                print(f"{Fore.RED}  ✖ {LANG[language]['invalid_times']}{Style.RESET_ALL}")
-            except ValueError:
-                print(f"{Fore.RED}  ✖ {LANG[language]['invalid_times']}{Style.RESET_ALL}")
-
-        print()
-        swaps = await buy_from_contract(w3, private_key, amount, swap_times, language)
-        successful_swaps += swaps
-        total_swaps += swap_times
-
+        except Exception as wallet_error:
+            print_border(f"Wallet error: {str(wallet_error)}", Fore.RED)
+            continue  # Lanjut ke wallet berikutnya
+        
+        # Jeda antar wallet
         if i < len(private_keys):
             delay = random.uniform(10, 30)
             print(f"{Fore.YELLOW}  ℹ {LANG[language]['pausing']} {delay:.2f} {'giây' if language == 'vi' else 'seconds'}{Style.RESET_ALL}")
@@ -320,5 +345,6 @@ async def run(language: str = 'en'):
     print_border(f"{LANG[language]['completed'].format(successful=successful_swaps, total=total_swaps)}", Fore.GREEN)
     print()
 
+
 if __name__ == "__main__":
-    asyncio.run(run_flapdotsh('en'))
+    asyncio.run(run('en'))

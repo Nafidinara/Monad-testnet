@@ -55,10 +55,12 @@ TOKENS = {
 }
 
 # ABI cho ERC20 token
+# Update ERC20_ABI to include the allowance function
 ERC20_ABI = [
     {"constant": False, "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"},
     {"constant": True, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
-    {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"}
+    {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+    {"constant": True, "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}
 ]
 
 # ABI cho router
@@ -119,25 +121,59 @@ def get_random_amount():
 
 # Tạo delay ngẫu nhiên (1-3 phút)
 def get_random_delay():
-    return random.randint(60, 180)  # Trả về giây
+    return random.randint(10, 30)  # Trả về giây
 
-# Hàm approve token với retry
-async def approve_token(private_key, token_address, amount, decimals, language, max_retries=3):
+# Add this constant for max approval
+MAX_UINT256 = 2**256 - 1  # Maximum uint256 value for unlimited approval
+
+# Add this function to check token allowance
+async def check_token_allowance(token_address, owner_address, spender_address, decimals, language, max_retries=3):
+    token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
+    
     for attempt in range(max_retries):
         try:
-            account = w3.eth.account.from_key(private_key)
-            wallet = account.address[:8] + "..."
-            token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
-            symbol = token_contract.functions.symbol().call()
+            # Add this function to ERC20_ABI if not already there
+            allowance = token_contract.functions.allowance(owner_address, spender_address).call()
+            return allowance
+        except Exception as e:
+            if "429 Client Error" in str(e) and attempt < max_retries - 1:
+                delay = 2 ** attempt
+                print_step('approve', f"{Fore.YELLOW}Thông tin đang truy vấn, thử lại sau {delay} giây...{Style.RESET_ALL}", language)
+                await asyncio.sleep(delay)
+            else:
+                print_step('approve', f"{Fore.RED}✘ Lỗi kiểm tra allowance: {str(e)}{Style.RESET_ALL}", language)
+                return 0
+    return 0
 
-            lang = {
-                'vi': {'check': f'Đang kiểm tra approval cho {symbol}', 'approving': f'Đang approve {symbol}', 'success': f'{symbol} đã được approve'},
-                'en': {'check': f'Checking approval for {symbol}', 'approving': f'Approving {symbol}', 'success': f'{symbol} approved'}
-            }[language]
+# Hàm approve token với retry
+# Modify the approve_token function to check allowance first and use MAX_UINT256
+async def approve_token(private_key, token_address, amount, decimals, language, max_retries=3):
+    account = w3.eth.account.from_key(private_key)
+    wallet = account.address[:8] + "..."
+    token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
+    symbol = token_contract.functions.symbol().call()
 
+    lang = {
+        'vi': {'check': f'Đang kiểm tra approval cho {symbol}', 'approving': f'Đang approve {symbol}', 'success': f'{symbol} đã được approve', 'already': f'{symbol} đã được approve trước đó'},
+        'en': {'check': f'Checking approval for {symbol}', 'approving': f'Approving {symbol}', 'success': f'{symbol} approved', 'already': f'{symbol} already approved'}
+    }[language]
+
+    print_step('approve', lang['check'], language)
+    
+    # Check current allowance
+    amount_in_decimals = w3.to_wei(amount, 'ether') if decimals == 18 else int(amount * 10**decimals)
+    current_allowance = await check_token_allowance(token_address, account.address, ROUTER_ADDRESS, decimals, language)
+    
+    # If allowance is sufficient, skip approval
+    if current_allowance >= amount_in_decimals:
+        print_step('approve', f"{Fore.GREEN}✔ {lang['already']}{Style.RESET_ALL}", language)
+        return amount_in_decimals
+    
+    # Otherwise approve with MAX_UINT256
+    for attempt in range(max_retries):
+        try:
             print_step('approve', lang['approving'], language)
-            amount_in_decimals = w3.to_wei(amount, 'ether') if decimals == 18 else int(amount * 10**decimals)
-            tx = token_contract.functions.approve(ROUTER_ADDRESS, amount_in_decimals).build_transaction({
+            tx = token_contract.functions.approve(ROUTER_ADDRESS, MAX_UINT256).build_transaction({
                 'from': account.address,
                 'gas': 100000,
                 'gasPrice': w3.eth.gas_price,
@@ -149,13 +185,13 @@ async def approve_token(private_key, token_address, amount, decimals, language, 
             await asyncio.sleep(2)
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
             if receipt.status == 1:
-                print_step('approve', f"{Fore.GREEN}✔ {lang['success']}{Style.RESET_ALL}", language)
+                print_step('approve', f"{Fore.GREEN}✔ {lang['success']} (Max Approval){Style.RESET_ALL}", language)
                 return amount_in_decimals
             else:
                 raise Exception(f"Approve thất bại: Status {receipt.status}")
         except Exception as e:
             if "429 Client Error" in str(e) and attempt < max_retries - 1:
-                delay = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                delay = 2 ** attempt
                 print_step('approve', f"{Fore.YELLOW}Thông tin đang truy vấn, thử lại sau {delay} giây...{Style.RESET_ALL}", language)
                 await asyncio.sleep(delay)
             else:
@@ -163,26 +199,51 @@ async def approve_token(private_key, token_address, amount, decimals, language, 
                 raise
 
 # Hàm swap Token sang MON
+# Modify swap_token_to_mon function to check token balance
 async def swap_token_to_mon(private_key, token_symbol, amount, language):
     token = TOKENS[token_symbol]
     try:
         account = w3.eth.account.from_key(private_key)
         wallet = account.address[:8] + "..."
         lang = {
-            'vi': {'start': f'Swap {amount} {token_symbol} sang MON', 'send': 'Đang gửi giao dịch swap...', 'success': 'Swap thành công!'},
-            'en': {'start': f'Swapping {amount} {token_symbol} to MON', 'send': 'Sending swap transaction...', 'success': 'Swap successful!'}
+            'vi': {'start': f'Swap {amount} {token_symbol} sang MON', 'send': 'Đang gửi giao dịch swap...', 'success': 'Swap thành công!', 'insufficient': 'Số dư không đủ'},
+            'en': {'start': f'Swapping {amount} {token_symbol} to MON', 'send': 'Sending swap transaction...', 'success': 'Swap successful!', 'insufficient': 'Insufficient balance'}
         }[language]
 
         print_border(f"{lang['start']} | {wallet}", Fore.MAGENTA)
         
-        amount_in_decimals = await approve_token(private_key, token['address'], amount, token['decimals'], language)
+        # Check token balance first
+        token_contract = w3.eth.contract(address=token['address'], abi=ERC20_ABI)
+        token_balance = token_contract.functions.balanceOf(account.address).call()
+        amount_in_decimals = int(amount * 10**token['decimals'])
         
+        if token_balance < amount_in_decimals:
+            print_step('swap', f"{Fore.RED}✘ {lang['insufficient']} - {token_symbol}: {token_balance/(10**token['decimals'])} < {amount}{Style.RESET_ALL}", language)
+            return False
+        
+        # Approve token
+        await approve_token(private_key, token['address'], amount, token['decimals'], language)
+        
+        # Create path array
+        path = [token['address'], WMON_ADDRESS]
+        
+        # Use a safety buffer for minimum output (0 means no minimum)
+        amountOutMin = 0
+        
+        # Calculate deadline - 10 minutes from now
+        deadline = int(time.time()) + 600
+        
+        # Build transaction with increased gas
         router = w3.eth.contract(address=ROUTER_ADDRESS, abi=ROUTER_ABI)
         tx = router.functions.swapExactTokensForETH(
-            amount_in_decimals, 0, [token['address'], WMON_ADDRESS], account.address, int(time.time()) + 600
+            amount_in_decimals, 
+            amountOutMin, 
+            path, 
+            account.address, 
+            deadline
         ).build_transaction({
             'from': account.address,
-            'gas': 300000,
+            'gas': 190000,  # Increased gas limit
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -201,7 +262,12 @@ async def swap_token_to_mon(private_key, token_symbol, amount, language):
         else:
             raise Exception(f"Giao dịch thất bại: Status {receipt.status}")
     except Exception as e:
-        print_step('swap', f"{Fore.RED}✘ Thất bại / Failed: {str(e)}{Style.RESET_ALL}", language)
+        error_message = str(e)
+        # Create a more user-friendly error message
+        if "execution reverted: TransferHelper::transferFrom" in error_message:
+            print_step('swap', f"{Fore.RED}✘ Thất bại / Failed: Token transfer failed - Check balance or approval{Style.RESET_ALL}", language)
+        else:
+            print_step('swap', f"{Fore.RED}✘ Thất bại / Failed: {error_message}{Style.RESET_ALL}", language)
         return False
 
 # Hàm swap MON sang Token
@@ -222,7 +288,7 @@ async def swap_mon_to_token(private_key, token_symbol, amount, language):
         ).build_transaction({
             'from': account.address,
             'value': w3.to_wei(amount, 'ether'),
-            'gas': 300000,
+            'gas': 180000,
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -354,4 +420,4 @@ async def run(language):
     await run_swap_cycle(cycles, private_keys, language)
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    asyncio.run(run('en'))

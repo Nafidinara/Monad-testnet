@@ -17,6 +17,14 @@ USDT_ADDRESS = "0x88b8E2161DEDC77EF4ab7585569D2415a1C1055D"
 POOL_FEE = 10000  # 1% fee
 CHAIN_ID = 10143  # Monad testnet chain ID
 
+# Gas optimization settings
+BASE_GAS_PRICE = 50  # Base gas price in Gwei
+MAX_GAS_PRICE = 102.5  # Max gas price in Gwei
+GAS_LIMIT_WRAP = 145904  # Gas limit for wrap operation
+GAS_LIMIT_UNWRAP = 160000  # Gas limit for unwrap operation
+GAS_LIMIT_APPROVE = 60000  # Gas limit for approve operation
+GAS_LIMIT_SWAP = 250000  # Gas limit for swap operation
+
 # Initialize web3 provider
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
@@ -40,7 +48,8 @@ WMON_ABI = [
 
 ERC20_ABI = [
     {"constant": True, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
-    {"constant": False, "inputs": [{"name": "spender", "type": "address"}, {"name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"}
+    {"constant": False, "inputs": [{"name": "spender", "type": "address"}, {"name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
+    {"constant": True, "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
 ]
 
 RUBIC_ABI = [
@@ -62,8 +71,8 @@ def print_border(text, color=Fore.CYAN, width=60):
 
 def print_step(step, message, lang):
     steps = {
-        'vi': {'wrap': 'Wrap MON', 'unwrap': 'Unwrap WMON', 'swap': 'Swap Tokens'},
-        'en': {'wrap': 'Wrap MON', 'unwrap': 'Unwrap WMON', 'swap': 'Swap Tokens'}
+        'vi': {'wrap': 'Wrap MON', 'unwrap': 'Unwrap WMON', 'swap': 'Swap Tokens', 'gas': 'Gas Info'},
+        'en': {'wrap': 'Wrap MON', 'unwrap': 'Unwrap WMON', 'swap': 'Swap Tokens', 'gas': 'Gas Info'}
     }
     step_text = steps[lang][step]
     print(f"{Fore.YELLOW}➤ {Fore.CYAN}{step_text:<15}{Style.RESET_ALL} | {message}")
@@ -80,26 +89,52 @@ def load_private_keys(file_path='pvkey.txt'):
         print(f"{Fore.RED}❌ Error reading pvkey.txt: {str(e)}{Style.RESET_ALL}")
         return []
 
-def get_mon_amount_from_user(language):
+def get_percentage_from_user(language):
     lang = {
-        'vi': "Nhập số MON (0.01 - 999): ",
-        'en': "Enter MON amount (0.01 - 999): "
+        'vi': "Nhập % MON để swap (1 - 90): ",
+        'en': "Enter % of MON to swap (1 - 90): "
     }
     error = {
-        'vi': "Số phải từ 0.01 đến 999 / Nhập lại số hợp lệ!",
-        'en': "Amount must be 0.01-999 / Enter a valid number!"
+        'vi': "Phần trăm phải từ 1 đến 90 / Nhập lại số hợp lệ!",
+        'en': "Percentage must be 1-90 / Enter a valid number!"
     }
     while True:
         try:
             print_border(lang[language], Fore.YELLOW)
-            amount = float(input(f"{Fore.GREEN}➤ {Style.RESET_ALL}"))
-            if 0.01 <= amount <= 999:
-                return w3.to_wei(amount, 'ether')
+            percentage = float(input(f"{Fore.GREEN}➤ {Style.RESET_ALL}"))
+            if 1 <= percentage <= 90:
+                return percentage / 100  # Return as a decimal
             print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
         except ValueError:
             print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
 
-def get_random_delay(min_delay=60, max_delay=180):
+def get_gas_price_from_user(language, default_gas_price=BASE_GAS_PRICE):
+    lang = {
+        'vi': f"Nhập Gas Price (Gwei) (mặc định {default_gas_price}): ",
+        'en': f"Enter Gas Price (Gwei) (default {default_gas_price}): "
+    }
+    error = {
+        'vi': "Giá phải > 0 / Nhập lại số hợp lệ!",
+        'en': "Price must be > 0 / Enter a valid number!"
+    }
+    
+    print_border(lang[language], Fore.YELLOW)
+    gas_input = input(f"{Fore.GREEN}➤ {Style.RESET_ALL}")
+    
+    if not gas_input.strip():
+        return default_gas_price
+    
+    try:
+        gas_price = float(gas_input)
+        if gas_price > 0:
+            return gas_price
+        print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
+        return default_gas_price
+    except ValueError:
+        print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
+        return default_gas_price
+
+def get_random_delay(min_delay=10, max_delay=30):
     return random.randint(min_delay, max_delay)
 
 def get_balance(account, token):
@@ -120,26 +155,54 @@ def get_available_tokens(account, min_amount=10**14):
             available.append((token, balance))
     return available
 
+def estimate_gas_cost(gas_price, gas_limit):
+    """Estimate transaction cost in MON"""
+    gas_cost_wei = w3.to_wei(float(gas_price), 'gwei') * int(gas_limit)
+    gas_cost_mon = float(w3.from_wei(gas_cost_wei, 'ether'))
+    return gas_cost_mon
+
 # Core functions
-def wrap_mon(private_key, amount, language):
+def wrap_mon(private_key, percentage, gas_price, language):
     try:
         account = w3.eth.account.from_key(private_key)
         wallet = account.address[:8] + "..."
+        
+        # Get MON balance and calculate amount to wrap based on percentage
+        mon_balance = get_balance(account.address, "mon")
+        amount = int(mon_balance * percentage)
+        
+        # Estimate gas cost
+        gas_cost = estimate_gas_cost(gas_price, GAS_LIMIT_WRAP)
+        gas_cost_wei = w3.to_wei(float(gas_cost) * 1.5, 'ether')  # Konversi ke float dulu
+
+        # Ensure we leave enough for gas
+        amount = amount - gas_cost_wei  # Leave 1.5x gas cost
+        
+        if amount <= 0:
+            print_step('wrap', f"{Fore.RED}Calculated amount is too small after gas reserve{Style.RESET_ALL}", language)
+            return False
+        
         lang = {
-            'vi': {'start': f"Wrap {w3.from_wei(amount, 'ether')} MON → WMON | {wallet}", 'send': 'Đang gửi giao dịch...', 'success': 'Wrap thành công!'},
-            'en': {'start': f"Wrap {w3.from_wei(amount, 'ether')} MON → WMON | {wallet}", 'send': 'Sending transaction...', 'success': 'Wrap successful!'}
+            'vi': {'start': f"Wrap {w3.from_wei(amount, 'ether')} MON ({percentage*100}%) → WMON | {wallet}", 'send': 'Đang gửi giao dịch...', 'success': 'Wrap thành công!'},
+            'en': {'start': f"Wrap {w3.from_wei(amount, 'ether')} MON ({percentage*100}%) → WMON | {wallet}", 'send': 'Sending transaction...', 'success': 'Wrap successful!'}
         }[language]
 
-        if get_balance(account.address, "mon") < amount:
-            print_step('wrap', f"{Fore.RED}Insufficient MON balance{Style.RESET_ALL}", language)
+        if mon_balance < amount + w3.to_wei(gas_cost, 'ether'):
+            print_step('wrap', f"{Fore.RED}Insufficient MON balance after gas reserve{Style.RESET_ALL}", language)
             return False
 
         print_border(lang['start'])
+        
+        # Display gas info
+        gas_price_gwei = gas_price
+        gas_cost_mon = estimate_gas_cost(gas_price_gwei, GAS_LIMIT_WRAP)
+        print_step('gas', f"Gas: {gas_price_gwei} Gwei | Limit: {GAS_LIMIT_WRAP} | Est. Cost: {gas_cost_mon:.8f} MON", language)
+        
         tx = wmon_contract.functions.deposit().build_transaction({
             'from': account.address,
             'value': amount,
-            'gas': 500000,
-            'gasPrice': w3.to_wei('100', 'gwei'),
+            'gas': GAS_LIMIT_WRAP,
+            'gasPrice': w3.to_wei(gas_price_gwei, 'gwei'),
             'nonce': w3.eth.get_transaction_count(account.address),
             'chainId': CHAIN_ID
         })
@@ -149,30 +212,109 @@ def wrap_mon(private_key, amount, language):
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         
         print_step('wrap', f"Tx: {Fore.YELLOW}{EXPLORER_URL}{tx_hash.hex()}{Style.RESET_ALL}", language)
-        w3.eth.wait_for_transaction_receipt(tx_hash)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        # Display actual gas used
+        actual_gas_used = receipt.gasUsed
+        actual_gas_cost = w3.from_wei(w3.to_wei(gas_price_gwei, 'gwei') * actual_gas_used, 'ether')
+        print_step('gas', f"{Fore.GREEN}Actual Gas Used: {actual_gas_used} | Cost: {actual_gas_cost:.8f} MON{Style.RESET_ALL}", language)
+        
         print_step('wrap', f"{Fore.GREEN}{lang['success']}{Style.RESET_ALL}", language)
         return True
     except Exception as e:
         print_step('wrap', f"{Fore.RED}Failed: {str(e)}{Style.RESET_ALL}", language)
         return False
 
-def swap_tokens(private_key, token_in, token_out, amount, language):
+# Function to unwrap WMON back to MON
+def unwrap_wmon(private_key, percentage, gas_price, language):
     try:
         account = w3.eth.account.from_key(private_key)
         wallet = account.address[:8] + "..."
+        
+        # Get WMON balance and calculate amount to unwrap based on percentage
+        wmon_balance = get_balance(account.address, "wmon")
+        amount = int(wmon_balance * percentage)
+        
+        if amount <= 0:
+            print_step('unwrap', f"{Fore.RED}Calculated amount is too small{Style.RESET_ALL}", language)
+            return False
+        
+        lang = {
+            'vi': {'start': f"Unwrap {w3.from_wei(amount, 'ether')} WMON ({percentage*100}%) → MON | {wallet}", 'send': 'Đang gửi giao dịch...', 'success': 'Unwrap thành công!'},
+            'en': {'start': f"Unwrap {w3.from_wei(amount, 'ether')} WMON ({percentage*100}%) → MON | {wallet}", 'send': 'Sending transaction...', 'success': 'Unwrap successful!'}
+        }[language]
+
+        print_border(lang['start'])
+        
+        # Display gas info
+        gas_limit = GAS_LIMIT_UNWRAP
+        gas_cost_mon = estimate_gas_cost(gas_price, gas_limit)
+        print_step('gas', f"Gas: {gas_price} Gwei | Limit: {gas_limit} | Est. Cost: {gas_cost_mon:.8f} MON", language)
+        
+        # Use withdraw function from WMON contract
+        tx = wmon_contract.functions.withdraw(amount).build_transaction({
+            'from': account.address,
+            'gas': gas_limit,
+            'gasPrice': w3.to_wei(gas_price, 'gwei'),
+            'nonce': w3.eth.get_transaction_count(account.address),
+            'chainId': CHAIN_ID
+        })
+
+        print_step('unwrap', lang['send'], language)
+        signed_tx = w3.eth.account.sign_transaction(tx, private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        print_step('unwrap', f"Tx: {Fore.YELLOW}{EXPLORER_URL}{tx_hash.hex()}{Style.RESET_ALL}", language)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        # Display actual gas used
+        actual_gas_used = receipt.gasUsed
+        actual_gas_cost = w3.from_wei(w3.to_wei(gas_price, 'gwei') * actual_gas_used, 'ether')
+        print_step('gas', f"{Fore.GREEN}Actual Gas Used: {actual_gas_used} | Cost: {actual_gas_cost:.8f} MON{Style.RESET_ALL}", language)
+        
+        if receipt['status'] == 1:
+            print_step('unwrap', f"{Fore.GREEN}{lang['success']}{Style.RESET_ALL}", language)
+            return True
+        else:
+            print_step('unwrap', f"{Fore.RED}Unwrap failed{Style.RESET_ALL}", language)
+            return False
+    except Exception as e:
+        print_step('unwrap', f"{Fore.RED}Failed: {str(e)}{Style.RESET_ALL}", language)
+        return False
+
+def swap_tokens(private_key, token_in, token_out, percentage, gas_price, language):
+    try:
+        account = w3.eth.account.from_key(private_key)
+        wallet = account.address[:8] + "..."
+        
+        # Get balance and calculate amount based on percentage
+        balance = get_balance(account.address, token_in)
+        
+        # If token is MON, reserve for gas
+        if token_in == "mon":
+            gas_cost = estimate_gas_cost(gas_price, GAS_LIMIT_SWAP)
+            # Reserve 1.5x gas cost
+            amount = int(balance * percentage) - w3.to_wei(gas_cost * 1.5, 'ether')
+        else:
+            amount = int(balance * percentage)
+        
+        if amount <= 0:
+            print_step('swap', f"{Fore.RED}Calculated amount is too small after gas reserve{Style.RESET_ALL}", language)
+            return False
+        
         # Use "MON" instead of "NATIVE"
         token_in_display = "MON" if token_in == "mon" else token_in.upper()
         token_out_display = "MON" if token_out == "mon" else token_out.upper()
         amount_readable = w3.from_wei(amount, 'ether') if token_in == "mon" else (amount / (10 ** RUBIC_TOKENS[token_in]["decimals"]))
+        
         lang = {
-            'vi': {'start': f"Swap {amount_readable} {token_in_display} → {token_out_display} | {wallet}", 'send': 'Đang gửi giao dịch swap...', 'success': 'Swap thành công!'},
-            'en': {'start': f"Swap {amount_readable} {token_in_display} → {token_out_display} | {wallet}", 'send': 'Sending swap transaction...', 'success': 'Swap successful!'}
+            'vi': {'start': f"Swap {amount_readable} {token_in_display} ({percentage*100}%) → {token_out_display} | {wallet}", 'send': 'Đang gửi giao dịch swap...', 'success': 'Swap thành công!'},
+            'en': {'start': f"Swap {amount_readable} {token_in_display} ({percentage*100}%) → {token_out_display} | {wallet}", 'send': 'Sending swap transaction...', 'success': 'Swap successful!'}
         }[language]
 
         print_border(lang['start'])
 
         # Check balance
-        balance = get_balance(account.address, token_in)
         if balance < amount:
             print_step('swap', f"{Fore.RED}Insufficient {token_in_display} balance: {balance / (10 ** (18 if token_in == 'mon' else RUBIC_TOKENS[token_in]['decimals']))} available{Style.RESET_ALL}", language)
             return False
@@ -180,17 +322,39 @@ def swap_tokens(private_key, token_in, token_out, amount, language):
         # Approve token if not MON
         if token_in != "mon":
             token_contract = w3.eth.contract(address=RUBIC_TOKENS[token_in]["address"], abi=ERC20_ABI)
-            approve_tx = token_contract.functions.approve(ROUTER_ADDRESS, amount).build_transaction({
-                'from': account.address,
-                'gas': 100000,
-                'gasPrice': w3.to_wei('50', 'gwei'),
-                'nonce': w3.eth.get_transaction_count(account.address),
-                'chainId': CHAIN_ID
-            })
-            signed_approve = w3.eth.account.sign_transaction(approve_tx, private_key)
-            approve_hash = w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(approve_hash)
-            print_step('swap', f"Approval Tx: {Fore.YELLOW}{EXPLORER_URL}{approve_hash.hex()}{Style.RESET_ALL}", language)
+            # Menggunakan MAX_UINT256 untuk approval maksimal (nilai maksimum pada Ethereum)
+            max_uint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935  # 2^256 - 1
+            
+            # Cek allowance yang sudah ada
+            current_allowance = token_contract.functions.allowance(account.address, ROUTER_ADDRESS).call()
+            
+            # Hanya approve jika allowance kurang dari jumlah yang dibutuhkan
+            if current_allowance < amount:
+                print_step('swap', f"Current allowance: {current_allowance}, needs approval", language)
+                
+                # Display gas info for approve
+                gas_cost_mon = estimate_gas_cost(gas_price, GAS_LIMIT_APPROVE)
+                print_step('gas', f"Approve Gas: {gas_price} Gwei | Limit: {GAS_LIMIT_APPROVE} | Est. Cost: {gas_cost_mon:.8f} MON", language)
+                
+                approve_tx = token_contract.functions.approve(ROUTER_ADDRESS, max_uint256).build_transaction({
+                    'from': account.address,
+                    'gas': GAS_LIMIT_APPROVE,
+                    'gasPrice': w3.to_wei(gas_price, 'gwei'),
+                    'nonce': w3.eth.get_transaction_count(account.address),
+                    'chainId': CHAIN_ID
+                })
+                signed_approve = w3.eth.account.sign_transaction(approve_tx, private_key)
+                approve_hash = w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                receipt = w3.eth.wait_for_transaction_receipt(approve_hash)
+                
+                # Display actual gas used for approve
+                actual_gas_used = receipt.gasUsed
+                actual_gas_cost = w3.from_wei(w3.to_wei(gas_price, 'gwei') * actual_gas_used, 'ether')
+                print_step('gas', f"{Fore.GREEN}Actual Approve Gas: {actual_gas_used} | Cost: {actual_gas_cost:.8f} MON{Style.RESET_ALL}", language)
+                
+                print_step('swap', f"Max Approval Tx: {Fore.YELLOW}{EXPLORER_URL}{approve_hash.hex()}{Style.RESET_ALL}", language)
+            else:
+                print_step('swap', f"Sufficient allowance exists: {current_allowance}", language)
 
         # Prepare swap path
         token_in_addr = WMON_CONTRACT if token_in == "mon" else RUBIC_TOKENS[token_in]["address"]
@@ -214,14 +378,18 @@ def swap_tokens(private_key, token_in, token_out, amount, language):
 
         final_data = router_contract.encode_abi("multicall", [multicall_data])
 
+        # Display gas info for swap
+        gas_cost_mon = estimate_gas_cost(gas_price, GAS_LIMIT_SWAP)
+        print_step('gas', f"Swap Gas: {gas_price} Gwei | Limit: {GAS_LIMIT_SWAP} | Est. Cost: {gas_cost_mon:.8f} MON", language)
+
         # Build transaction
         tx = {
             'from': account.address,
             'to': ROUTER_ADDRESS,
             'value': amount if token_in == "mon" else 0,
             'data': final_data,
-            'gas': 500000,
-            'gasPrice': w3.to_wei('100', 'gwei'),
+            'gas': GAS_LIMIT_SWAP,
+            'gasPrice': w3.to_wei(gas_price, 'gwei'),
             'nonce': w3.eth.get_transaction_count(account.address),
             'chainId': CHAIN_ID
         }
@@ -232,6 +400,11 @@ def swap_tokens(private_key, token_in, token_out, amount, language):
         
         print_step('swap', f"Tx: {Fore.YELLOW}{EXPLORER_URL}{tx_hash.hex()}{Style.RESET_ALL}", language)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        # Display actual gas used for swap
+        actual_gas_used = receipt.gasUsed
+        actual_gas_cost = w3.from_wei(w3.to_wei(gas_price, 'gwei') * actual_gas_used, 'ether')
+        print_step('gas', f"{Fore.GREEN}Actual Swap Gas: {actual_gas_used} | Cost: {actual_gas_cost:.8f} MON{Style.RESET_ALL}", language)
         
         if receipt['status'] == 1:
             print_step('swap', f"{Fore.GREEN}{lang['success']}{Style.RESET_ALL}", language)
@@ -244,7 +417,8 @@ def swap_tokens(private_key, token_in, token_out, amount, language):
         return False
 
 # Main execution
-def run_swap_cycle(cycles, private_keys, language):
+# Main execution
+def run_swap_cycle(cycles, private_keys, percentage, gas_price, language):
     all_tokens = list(RUBIC_TOKENS.keys())  # All possible output tokens
     for cycle in range(1, cycles + 1):
         for pk in private_keys:
@@ -262,22 +436,21 @@ def run_swap_cycle(cycles, private_keys, language):
                 continue
 
             # Wrap some MON if MON is available
-            amount = get_mon_amount_from_user(language)
             has_mon = "mon" in [t[0] for t in available_tokens]
             if has_mon:
-                if wrap_mon(pk, amount, language):
+                if wrap_mon(pk, percentage, gas_price, language):
                     # Swap MON to all other tokens
                     mon_balance = get_balance(account.address, "mon")
-                    if mon_balance >= amount:
+                    if mon_balance > 0:
+                        swap_percentage = percentage  # Use same percentage for consistency
                         for token_out in all_tokens:
                             if token_out != "wmon":  # Skip WMON since we wrap to it
-                                swap_amount = amount // len([t for t in all_tokens if t != "wmon"])  # Divide amount among tokens
-                                if swap_tokens(pk, "mon", token_out, swap_amount, language):
+                                if swap_tokens(pk, "mon", token_out, swap_percentage / len([t for t in all_tokens if t != "wmon"]), gas_price, language):
                                     time.sleep(5)  # Small delay between swaps
                                     # Swap back to MON
                                     token_balance = get_balance(account.address, token_out)
                                     if token_balance >= 10**14:
-                                        swap_tokens(pk, token_out, "mon", token_balance // 2, language)
+                                        swap_tokens(pk, token_out, "mon", 0.9, gas_price, language) # 90%
                                 else:
                                     print(f"{Fore.YELLOW}Skipping swap to {token_out.upper()} due to failure{Style.RESET_ALL}")
                     else:
@@ -286,7 +459,16 @@ def run_swap_cycle(cycles, private_keys, language):
                     print(f"{Fore.YELLOW}Wrap failed, skipping swaps{Style.RESET_ALL}")
             else:
                 print(f"{Fore.YELLOW}No MON available to wrap and swap{Style.RESET_ALL}")
-
+            
+            # Unwrap 98% of WMON back to MON after transactions for this address are done
+            wmon_balance = get_balance(account.address, "wmon")
+            if wmon_balance >= 10**14:  # If there's some WMON
+                print_border(f"UNWRAPPING WMON BACK TO MON | {wallet}", Fore.MAGENTA)
+                print_step('unwrap', f"Unwrapping 98% of WMON back to MON", language)
+                unwrap_wmon(pk, 0.98, gas_price, language)  # Unwrap 98% of WMON using direct unwrap
+            else:
+                print(f"{Fore.YELLOW}No WMON available to unwrap{Style.RESET_ALL}")
+            
             if cycle < cycles or pk != private_keys[-1]:
                 delay = get_random_delay()
                 wait_msg = f"Đợi {delay} giây..." if language == 'vi' else f"Waiting {delay} seconds..."
@@ -305,6 +487,22 @@ def run(language='vi'):
 
     print(f"{Fore.CYAN}👥 {'Tài khoản' if language == 'vi' else 'Accounts'}: {len(private_keys)}{Style.RESET_ALL}")
 
+    # Get percentage for all accounts, only once
+    percentage = get_percentage_from_user(language)
+    
+    # Get gas price
+    gas_price = get_gas_price_from_user(language, BASE_GAS_PRICE)
+    
+    # Display gas info banner
+    print(f"{Fore.YELLOW}{'─' * 60}{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'GAS SETTINGS':^56} │{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Gas Price: ' + str(gas_price) + ' Gwei':^56} │{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Wrap Gas Limit: ' + str(GAS_LIMIT_WRAP):^56} │{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Unwrap Gas Limit: ' + str(GAS_LIMIT_UNWRAP):^56} │{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Approve Gas Limit: ' + str(GAS_LIMIT_APPROVE):^56} │{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│ {'Swap Gas Limit: ' + str(GAS_LIMIT_SWAP):^56} │{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}{'─' * 60}{Style.RESET_ALL}")
+    
     while True:
         try:
             print_border("SỐ VÒNG LẶP / NUMBER OF CYCLES", Fore.YELLOW)
@@ -316,13 +514,13 @@ def run(language='vi'):
         except ValueError:
             print(f"{Fore.RED}❌ Nhập số hợp lệ / Enter a valid number{Style.RESET_ALL}")
 
-    start_msg = f"Chạy {cycles} vòng hoán đổi..." if language == 'vi' else f"Running {cycles} swap cycles..."
+    start_msg = f"Chạy {cycles} vòng hoán đổi với {percentage*100}% số dư, gas {gas_price} Gwei..." if language == 'vi' else f"Running {cycles} swap cycles with {percentage*100}% balance, gas {gas_price} Gwei..."
     print(f"{Fore.YELLOW}🚀 {start_msg}{Style.RESET_ALL}")
-    run_swap_cycle(cycles, private_keys, language)
+    run_swap_cycle(cycles, private_keys, percentage, gas_price, language)
 
     print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}│ {'HOÀN TẤT / ALL DONE':^56} │{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    run('en')  # Removed asyncio.run since asyncio isn't used in this script

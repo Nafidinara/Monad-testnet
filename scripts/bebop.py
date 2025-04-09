@@ -27,6 +27,14 @@ def print_step(step, message, lang):
     step_text = steps[lang][step]
     print(f"{Fore.YELLOW}➤ {Fore.CYAN}{step_text:<15}{Style.RESET_ALL} | {message}")
 
+def get_wallet_balance(address):
+    try:
+        balance = w3.eth.get_balance(address)
+        return balance
+    except Exception as e:
+        print(f"{Fore.RED}❌ Error getting balance: {str(e)}{Style.RESET_ALL}")
+        return 0
+
 # Load private keys từ prkeys.txt
 def load_private_keys(file_path):
     try:
@@ -51,28 +59,28 @@ contract_abi = [
 contract = w3.eth.contract(address=WMON_CONTRACT, abi=contract_abi)
 
 # Nhập số lượng MON từ người dùng
-def get_mon_amount_from_user(language):
+def get_percentage_from_user(language):
     lang = {
-        'vi': "Nhập số MON (0.01 - 999): ",
-        'en': "Enter MON amount (0.01 - 999): "
+        'vi': "Nhập phần trăm số dư để swap (1-100): ",
+        'en': "Enter percentage of balance to swap (1-100): "
     }
     error = {
-        'vi': "Số phải từ 0.01 đến 999 / Nhập lại số hợp lệ!",
-        'en': "Amount must be 0.01-999 / Enter a valid number!"
+        'vi': "Phần trăm phải từ 1 đến 100 / Nhập lại số hợp lệ!",
+        'en': "Percentage must be 1-100 / Enter a valid number!"
     }
     while True:
         try:
             print_border(lang[language], Fore.YELLOW)
-            amount = float(input(f"{Fore.GREEN}➤ {Style.RESET_ALL}"))
-            if 0.01 <= amount <= 999:
-                return w3.to_wei(amount, 'ether')
+            percentage = float(input(f"{Fore.GREEN}➤ {Style.RESET_ALL}"))
+            if 1 <= percentage <= 100:
+                return percentage / 100  # Convert to decimal
             print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
         except ValueError:
             print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
 
 # Thời gian delay ngẫu nhiên (60-180 giây)
 def get_random_delay():
-    return random.randint(60, 180)
+    return random.randint(10, 30)
 
 # Wrap MON thành WMON
 def wrap_mon(private_key, amount, language):
@@ -96,8 +104,8 @@ def wrap_mon(private_key, amount, language):
         tx = contract.functions.deposit().build_transaction({
             'from': account.address,
             'value': amount,
-            'gas': 500000,
-            'gasPrice': w3.to_wei('100', 'gwei'),
+            'gas': 200000,
+            'gasPrice': w3.to_wei('60', 'gwei'),
             'nonce': w3.eth.get_transaction_count(account.address),
         })
 
@@ -134,7 +142,7 @@ def unwrap_mon(private_key, amount, language):
         print_border(lang['start'])
         tx = contract.functions.withdraw(amount).build_transaction({
             'from': account.address,
-            'gas': 500000,
+            'gas': 200000,
             'gasPrice': w3.to_wei('50', 'gwei'),
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -152,16 +160,30 @@ def unwrap_mon(private_key, amount, language):
         raise
 
 # Chạy vòng lặp swap
-def run_swap_cycle(cycles, private_keys, language):
+# Modify run_swap_cycle to use percentage
+def run_swap_cycle(cycles, private_keys, percentage, language):
     for cycle in range(1, cycles + 1):
         for pk in private_keys:
-            wallet = w3.eth.account.from_key(pk).address[:8] + "..."
+            account = w3.eth.account.from_key(pk)
+            wallet = account.address[:8] + "..."
+            
+            # Get wallet balance and calculate amount based on percentage
+            balance = get_wallet_balance(account.address)
+            # Leave some for gas
+            amount = int(balance * percentage * 0.95)  # 95% of the percentage to leave room for gas
+            
+            if amount <= 0:
+                print(f"{Fore.RED}❌ {'Số dư không đủ' if language == 'vi' else 'Insufficient balance'}: {wallet}{Style.RESET_ALL}")
+                continue
+                
             msg = f"CYCLE {cycle}/{cycles} | Tài khoản / Account: {wallet}"
             print(f"{Fore.CYAN}{'═' * 60}{Style.RESET_ALL}")
             print(f"{Fore.CYAN}│ {msg:^56} │{Style.RESET_ALL}")
             print(f"{Fore.CYAN}{'═' * 60}{Style.RESET_ALL}")
+            
+            print_step('wrap', f"{'Số dư' if language == 'vi' else 'Balance'}: {Fore.GREEN}{w3.from_wei(balance, 'ether')} MON{Style.RESET_ALL}", language)
+            print_step('wrap', f"{'Số tiền swap' if language == 'vi' else 'Swap amount'}: {Fore.GREEN}{w3.from_wei(amount, 'ether')} MON ({percentage*100}%){Style.RESET_ALL}", language)
 
-            amount = get_mon_amount_from_user(language)
             wrap_mon(pk, amount, language)
             unwrap_mon(pk, amount, language)
 
@@ -172,6 +194,7 @@ def run_swap_cycle(cycles, private_keys, language):
                 time.sleep(delay)
 
 # Hàm chính tương thích với main.py
+# Update the run function
 def run(language):
     print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}│ {'BEBOP SWAP - MONAD TESTNET':^56} │{Style.RESET_ALL}")
@@ -180,11 +203,14 @@ def run(language):
     # Load private keys
     private_keys = load_private_keys('pvkey.txt')
     if not private_keys:
-        print(f"{Fore.RED}❌ Không tìm thấy prkeys.txt / prkeys.txt not found{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Không tìm thấy pvkey.txt / pvkey.txt not found{Style.RESET_ALL}")
         return
 
     print(f"{Fore.CYAN}👥 {'Tài khoản' if language == 'vi' else 'Accounts'}: {len(private_keys)}{Style.RESET_ALL}")
 
+    # Get percentage input once
+    percentage = get_percentage_from_user(language)
+    
     # Nhập số cycle
     while True:
         try:
@@ -197,14 +223,14 @@ def run(language):
         except ValueError:
             print(f"{Fore.RED}❌ Nhập số hợp lệ / Enter a valid number{Style.RESET_ALL}")
 
-    # Chạy script
-    start_msg = f"Chạy {cycles} vòng hoán đổi..." if language == 'vi' else f"Running {cycles} swap cycles..."
+    # Chạy script with percentage
+    start_msg = f"Chạy {cycles} vòng hoán đổi với {percentage*100}% số dư..." if language == 'vi' else f"Running {cycles} swap cycles with {percentage*100}% of balance..."
     print(f"{Fore.YELLOW}🚀 {start_msg}{Style.RESET_ALL}")
-    run_swap_cycle(cycles, private_keys, language)
+    run_swap_cycle(cycles, private_keys, percentage, language)
 
     print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}│ {'HOÀN TẤT / ALL DONE':^19} │{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
-    run('vi')  # Chạy độc lập với ngôn ngữ mặc định là Tiếng Việt
+    run('en')  # Chạy độc lập với ngôn ngữ mặc định là Tiếng Việt

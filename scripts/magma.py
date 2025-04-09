@@ -11,8 +11,8 @@ init(autoreset=True)
 RPC_URL = "https://testnet-rpc.monad.xyz/"
 EXPLORER_URL = "https://testnet.monadexplorer.com/tx/0x"
 MAGMA_CONTRACT = "0x2c9C959516e9AAEdB2C748224a41249202ca8BE7"
-GAS_LIMIT_STAKE = 500000
-GAS_LIMIT_UNSTAKE = 800000
+GAS_LIMIT_STAKE = 250000
+GAS_LIMIT_UNSTAKE = 280000
 
 # Hàm đọc nhiều private key từ pvkey.txt
 def load_private_keys(file_path):
@@ -61,7 +61,7 @@ def get_random_amount():
 
 # Tạo delay ngẫu nhiên (1-3 phút)
 def get_random_delay():
-    return random.randint(60, 180)  # Trả về giây
+    return random.randint(10, 30)  # Trả về giây
 
 # Stake MON
 async def stake_mon(private_key, amount, language, cycle):
@@ -213,4 +213,4 @@ async def run(language):
     await run_staking_cycle(cycles, private_keys, language)
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    asyncio.run(run('en'))

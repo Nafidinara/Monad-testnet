@@ -16,8 +16,8 @@ EXPLORER_URL = "https://testnet.monadexplorer.com/tx/0x"
 FRONTRUNNER_CONTRACT = "0x9EaBA701a49adE7525dFfE338f0C7E06Eca7Cf07"
 CHAIN_ID = 10143  # Monad testnet chain ID
 BALANCE_THRESHOLD = 0.001  # Ngưỡng số dư tối thiểu
-DEFAULT_ATTEMPTS = 99  # Giảm mặc định để người dùng dễ nhập
-GAS_LIMIT = 200000
+DEFAULT_ATTEMPTS = 20  # Giảm mặc định để người dùng dễ nhập
+GAS_LIMIT = 180000
 BORDER_WIDTH = 80
 
 # ABI cho contract Frontrunner
@@ -234,7 +234,7 @@ async def run(language: str = 'vi'):
         await play_frontrunner(pk, attempts, args.interval, args.gas_price, language)
         
         if i < len(private_keys):
-            delay = random.randint(60, 180)
+            delay = random.randint(10, 30)
             msg = f"⏳ Đợi {delay} giây..." if language == 'vi' else f"⏳ Waiting {delay} seconds..."
             print(f"\n{Fore.YELLOW}{msg}{Style.RESET_ALL}")
             await asyncio.sleep(delay)
@@ -243,4 +243,4 @@ async def run(language: str = 'vi'):
     print_border("🏆 HOÀN TẤT" if language == 'vi' else "🏆 ALL DONE", Fore.GREEN, icon="🎉")
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    asyncio.run(run('en'))

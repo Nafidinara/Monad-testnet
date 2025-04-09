@@ -15,9 +15,9 @@ provider = Web3.HTTPProvider(RPC_URL)
 w3 = Web3(provider)
 
 contract_address = Web3.to_checksum_address("0xb2f82D0f38dc453D596Ad40A37799446Cc89274A")
-gas_limit_stake = 500000
-gas_limit_unstake = 800000
-gas_limit_claim = 800000
+gas_limit_stake = 150000
+gas_limit_unstake = 160000
+gas_limit_claim = 150000
 
 # Minimal ABI
 minimal_abi = [
@@ -39,8 +39,8 @@ def get_random_amount():
     return w3.to_wei(round(random_amount, 4), 'ether')
 
 def get_random_delay():
-    min_delay = 1 * 60 * 1000  # 1 minute in ms
-    max_delay = 3 * 60 * 1000  # 3 minutes in ms
+    min_delay = 0.2 * 60 * 1000  # 1 minute in ms
+    max_delay = 0.3 * 60 * 1000  # 3 minutes in ms
     return random.randint(min_delay, max_delay) / 1000
 
 async def delay(ms):
@@ -240,7 +240,7 @@ async def claim_mon(account, private_key, cycle_number, language):
                Web3.to_bytes(hexstr='0x40').rjust(32, b'\0') + \
                w3.to_bytes(hexstr=account.address).rjust(32, b'\0') + \
                w3.to_bytes(1).rjust(32, b'\0') + \
-               w3.to_bytes(status['id']).rjust(32, b'\0')
+               w3.to_bytes(int(status['id'])).rjust(32, b'\0')
 
         gas_price = w3.eth.gas_price
         tx = {
@@ -370,4 +370,4 @@ async def run(language):
         print(f"{Fore.RED}{'═' * 60}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))  # Chạy độc lập mặc định bằng tiếng Việt
+    asyncio.run(run('en'))  # Chạy độc lập mặc định bằng tiếng Việt

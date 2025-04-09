@@ -13,6 +13,8 @@ EXPLORER_URL = "https://testnet.monadexplorer.com/tx/0x"
 SHMONAD_ADDRESS = "0x3a98250F98Dd388C211206983453837C8365BDc1"
 STAKE_POLICY_ID = 4
 CHAIN_ID = 10143  # Monad testnet chain ID
+# Constants (tambahkan setelah CHAIN_ID)
+MAX_UINT256 = 2**256 - 1  # Nilai maksimum untuk approve
 
 # Full contract ABI
 SHMONAD_ABI = [
@@ -864,6 +866,26 @@ def load_private_keys(file_path='pvkey.txt'):
         print(f"{Fore.RED}❌ Lỗi khi đọc {file_path}: {str(e)}{Style.RESET_ALL}")
         return []
 
+def get_percentage_from_user(language):
+    lang = {
+        'vi': "Nhập phần trăm sử dụng (1-100, mặc định 20): ",
+        'en': "Enter percentage to use (1-100, default 20): "
+    }
+    error = {
+        'vi': "Phần trăm phải từ 1 đến 100 / Nhập lại số hợp lệ!",
+        'en': "Percentage must be 1-100 / Enter a valid number!"
+    }
+    while True:
+        try:
+            print_border(lang[language], Fore.YELLOW)
+            amount = float(input(f"{Fore.GREEN}➤ {Style.RESET_ALL}"))
+            if 1 <= amount <= 100:
+                return amount
+            print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
+            return 20  # Default value
+
 def get_mon_amount_from_user(language):
     lang = {
         'vi': "Nhập số MON để mua shMON (0.01 - 999): ",
@@ -883,7 +905,7 @@ def get_mon_amount_from_user(language):
         except ValueError:
             print(f"{Fore.RED}❌ {error[language]}{Style.RESET_ALL}")
 
-def get_random_delay(min_delay=60, max_delay=180):
+def get_random_delay(min_delay=10, max_delay=30):
     return random.randint(min_delay, max_delay)
 
 def get_balance(account, token_type='mon'):
@@ -1039,7 +1061,7 @@ def unstake_shmon(private_key, language):
             return False
 
         # Wait before claim
-        wait_time = random.randint(40, 60)
+        wait_time = random.randint(30, 60)
         print_step('unstake', f"Đợi {wait_time} giây trước khi claim..." if language == 'vi' else f"Waiting {wait_time} seconds before claiming...", language)
         time.sleep(wait_time)
 
@@ -1115,7 +1137,7 @@ def sell_shmon(private_key, amount, language):
         return False
 
 # Main execution
-def run_swap_cycle(cycles, private_keys, language):
+def run_swap_cycle(cycles, private_keys, language, percentage):
     for cycle in range(1, cycles + 1):
         for pk in private_keys:
             account = w3.eth.account.from_key(pk)
@@ -1131,7 +1153,11 @@ def run_swap_cycle(cycles, private_keys, language):
 
             print(f"{Fore.YELLOW}Số dư: MON: {w3.from_wei(mon_balance, 'ether'):.6f}, shMON: {w3.from_wei(shmon_balance, 'ether'):.6f}, Bonded shMON: {w3.from_wei(bonded_balance, 'ether'):.6f}{Style.RESET_ALL}")
 
-            amount = get_mon_amount_from_user(language)
+            mon_balance = get_balance(account.address, "mon")
+            # Simpan 0.01 MON untuk gas
+            gas_reserve = w3.to_wei(0.01, 'ether')
+            available_balance = max(0, mon_balance - gas_reserve)
+            amount = int(available_balance * percentage / 100)
 
             # Logic: Buy -> Stake -> Unstake -> Sell
             if mon_balance > amount and buy_shmon(pk, amount, language):
@@ -1162,7 +1188,9 @@ def run(language='vi'):
         return
 
     print(f"{Fore.CYAN}👥 {'Tài khoản' if language == 'vi' else 'Accounts'}: {len(private_keys)}{Style.RESET_ALL}")
-
+    
+    # Lấy persentase sử dụng
+    percentage = get_percentage_from_user(language)
     while True:
         try:
             print_border("SỐ VÒNG LẶP / NUMBER OF CYCLES", Fore.YELLOW)
@@ -1176,11 +1204,8 @@ def run(language='vi'):
 
     start_msg = f"Chạy {cycles} vòng shMON..." if language == 'vi' else f"Running {cycles} shMON cycles..."
     print(f"{Fore.YELLOW}🚀 {start_msg}{Style.RESET_ALL}")
-    run_swap_cycle(cycles, private_keys, language)
-
-    print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}│ {'HOÀN TẤT / ALL DONE':^56} │{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}💹 {'Phần trăm sử dụng' if language == 'vi' else 'Usage percentage'}: {percentage}%{Style.RESET_ALL}")
+    run_swap_cycle(cycles, private_keys, language, percentage)
 
 if __name__ == "__main__":
-    run('vi')
+    run('en')

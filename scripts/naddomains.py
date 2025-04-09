@@ -472,22 +472,19 @@ class NadDomains:
                 return True
         return await self.register_domain(custom_name)
 
+    # Remove the prompt for custom domain name and confirmation when wallet already has a domain
+    # Modify the register_random_domain method to skip the confirmation prompt
+
     async def register_random_domain(self) -> bool:
         """Đăng ký tên miền ngẫu nhiên với logic retry."""
         has_existing_domain = await self.has_domain()
         if has_existing_domain:
-            question_msg = {
-                'vi': "Ví đã có tên miền NAD. Bạn có muốn đăng ký thêm không? (y/n)",
-                'en': "Wallet already has a NAD domain. Do you want to register another? (y/n)"
+            existing_msg = {
+                'vi': "Ví đã có tên miền NAD. Tiếp tục đăng ký thêm tên miền ngẫu nhiên.",
+                'en': "Wallet already has a NAD domain. Proceeding to register another random domain."
             }
-            choice = input(f"{Fore.CYAN}{question_msg[self.language]}: {Style.RESET_ALL}").strip().lower()
-            if choice != 'y':
-                skip_msg = {
-                    'vi': "Bỏ qua đăng ký theo yêu cầu",
-                    'en': "Skipping registration as requested"
-                }
-                print_step('register', f"{Fore.YELLOW}⚠ {skip_msg[self.language]}{Style.RESET_ALL}", self.language)
-                return True
+            print_step('register', f"{Fore.YELLOW}⚠ {existing_msg[self.language]}{Style.RESET_ALL}", self.language)
+            # No confirmation prompt, just continue with registration
 
         for retry in range(ATTEMPTS):
             try:
@@ -524,16 +521,16 @@ class NadDomains:
         print_step('register', f"{Fore.RED}✘ {fail_msg[self.language]}{Style.RESET_ALL}", self.language)
         return False
 
-    async def _handle_error(self, action: str, error: Exception) -> None:
-        """Xử lý lỗi với pause ngẫu nhiên."""
-        pause = random.uniform(*PAUSE_BETWEEN_ACTIONS)
-        logger.error(f"[{self.account_index}] Error in {action}: {error}. Sleeping for {pause:.2f}s")
-        error_msg = {
-            'vi': f"Lỗi: {str(error)}. Thử lại sau {pause:.2f} giây",
-            'en': f"Error: {str(error)}. Retrying in {pause:.2f} seconds"
-        }
-        print_step(action, f"{Fore.RED}✘ {error_msg[self.language]}{Style.RESET_ALL}", self.language)
-        await asyncio.sleep(pause)
+        async def _handle_error(self, action: str, error: Exception) -> None:
+            """Xử lý lỗi với pause ngẫu nhiên."""
+            pause = random.uniform(*PAUSE_BETWEEN_ACTIONS)
+            logger.error(f"[{self.account_index}] Error in {action}: {error}. Sleeping for {pause:.2f}s")
+            error_msg = {
+                'vi': f"Lỗi: {str(error)}. Thử lại sau {pause:.2f} giây",
+                'en': f"Error: {str(error)}. Retrying in {pause:.2f} seconds"
+            }
+            print_step(action, f"{Fore.RED}✘ {error_msg[self.language]}{Style.RESET_ALL}", self.language)
+            await asyncio.sleep(pause)
 
 async def run(language: str) -> None:
     """Chạy script NAD Domains với nhiều private keys từ pvkey.txt."""
@@ -567,6 +564,12 @@ async def run(language: str) -> None:
     }
     print(f"{Fore.CYAN}👥 {accounts_msg[language]:^76}{Style.RESET_ALL}")
 
+    auto_msg = {
+        'vi': "Chế độ tự động: Đăng ký tên miền ngẫu nhiên cho tất cả tài khoản",
+        'en': "Automatic mode: Registering random domains for all accounts"
+    }
+    print_border(auto_msg[language], Fore.CYAN)
+
     success_count = 0
     async with aiohttp.ClientSession() as session:
         for idx, private_key in enumerate(private_keys, start=1):
@@ -579,19 +582,9 @@ async def run(language: str) -> None:
             nad = NadDomains(idx, private_key, session, language)
             logger.info(f"Processing account {idx}/{len(private_keys)}: {nad.account.address}")
 
-            # Nhập tên miền từ người dùng hoặc chọn ngẫu nhiên
-            prompt_msg = {
-                'vi': "Nhập tên miền bạn muốn đăng ký (Enter để dùng ngẫu nhiên) / Enter domain name (Enter for random)",
-                'en': "Enter domain name to register (Enter for random) / Nhập tên miền (Enter để dùng ngẫu nhiên)"
-            }
-            custom_name = input(f"{Fore.CYAN}{prompt_msg[language]}: {Style.RESET_ALL}").strip()
-
-            if not custom_name:
-                if await nad.register_random_domain():
-                    success_count += 1
-            else:
-                if await nad.register_custom_domain(custom_name):
-                    success_count += 1
+            # Always use random domain registration - no user input
+            if await nad.register_random_domain():
+                success_count += 1
 
             if idx < len(private_keys):
                 pause = random.uniform(10, 30)
@@ -603,6 +596,6 @@ async def run(language: str) -> None:
                 await asyncio.sleep(pause)
 
     print_completion_message(accounts=len(private_keys), language=language, success_count=success_count)
-
+    
 if __name__ == "__main__":
     asyncio.run(run("vi"))  # Chạy mặc định với tiếng Việt

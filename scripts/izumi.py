@@ -65,7 +65,7 @@ def get_random_amount():
 
 # Tạo delay ngẫu nhiên (1-3 phút)
 def get_random_delay():
-    return random.randint(60, 180)  # Trả về giây
+    return random.randint(10, 30)  # Trả về giây
 
 # Wrap MON thành WMON
 async def wrap_mon(private_key, amount, language):
@@ -89,7 +89,7 @@ async def wrap_mon(private_key, amount, language):
         tx = contract.functions.deposit().build_transaction({
             'from': account.address,
             'value': amount,
-            'gas': 500000,
+            'gas': 170000,
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -128,7 +128,7 @@ async def unwrap_mon(private_key, amount, language):
         print_border(f"{lang['start']} | {wallet}")
         tx = contract.functions.withdraw(amount).build_transaction({
             'from': account.address,
-            'gas': 500000,
+            'gas': 170000,
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -204,4 +204,4 @@ async def run(language):
     await run_swap_cycle(cycles, private_keys, language)
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))  # Chạy độc lập với Tiếng Việt mặc định
+    asyncio.run(run('en'))  # Chạy độc lập với Tiếng Việt mặc định

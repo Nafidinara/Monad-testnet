@@ -26,6 +26,7 @@ BORDER_WIDTH = 80  # Độ rộng viền cho giao diện
 ATTEMPTS = 3
 PAUSE_BETWEEN_SWAPS = [5, 10]
 PAUSE_BETWEEN_ACTIONS = [5, 15]
+MAX_UINT256 = 2**256 - 1  # Giá trị max uint256 cho approve
 
 AMBIENT_TOKENS = {
     "usdt": {"address": "0x88b8E2161DEDC77EF4ab7585569D2415a1C1055D", "decimals": 6},
@@ -138,23 +139,32 @@ def print_completion_message(accounts: int, language: str, success_count: int):
     print(f"{Fore.GREEN}{'═' * BORDER_WIDTH}{Style.RESET_ALL}")
 
 class AmbientDex:
-    def __init__(self, account_index: int, private_key: str, session: aiohttp.ClientSession, language: str):
+    def __init__(self, account_index: int, private_key: str, session: aiohttp.ClientSession, language: str, swap_percentage: float):
         self.account_index = account_index
         self.web3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_URL))
         self.account = Account.from_key(private_key)
         self.session = session
         self.language = language
+        self.swap_percentage = swap_percentage
         self.router_contract = self.web3.eth.contract(address=AMBIENT_CONTRACT, abi=AMBIENT_ABI)
 
     async def get_gas_params(self) -> Dict[str, int]:
         """Lấy thông số gas từ mạng."""
-        latest_block = await self.web3.eth.get_block('latest')
-        base_fee = latest_block['baseFeePerGas']
-        max_priority_fee = await self.web3.eth.max_priority_fee
-        return {
-            "maxFeePerGas": base_fee + max_priority_fee,
-            "maxPriorityFeePerGas": max_priority_fee,
-        }
+        try:
+            latest_block = await self.web3.eth.get_block('latest')
+            base_fee = latest_block['baseFeePerGas']
+            max_priority_fee = await self.web3.eth.max_priority_fee
+            return {
+                "maxFeePerGas": base_fee + max_priority_fee,
+                "maxPriorityFeePerGas": max_priority_fee,
+            }
+        except Exception as e:
+            logger.warning(f"[{self.account_index}] Error getting gas params: {str(e)}. Using default values")
+            # Provide default values if there's an error
+            return {
+                "maxFeePerGas": self.web3.to_wei(0.0000005, 'ether'),
+                "maxPriorityFeePerGas": self.web3.to_wei(0.0000001, 'ether'),
+            }
 
     def convert_to_wei(self, amount: float, token: str) -> int:
         """Chuyển đổi số lượng sang wei dựa trên số thập phân của token."""
@@ -175,10 +185,16 @@ class AmbientDex:
         tokens_with_balance = []
         
         # Kiểm tra số dư native token (MON)
-        native_balance = await self.web3.eth.get_balance(self.account.address)
-        if native_balance > 0:
-            native_amount = self.convert_from_wei(native_balance, "native")
-            tokens_with_balance.append(("native", native_amount))
+        try:
+            native_balance = await self.web3.eth.get_balance(self.account.address)
+            if native_balance > 0:
+                # Giữ lại một phần nhỏ để trả phí gas
+                gas_reserve = self.web3.to_wei(0.01, 'ether')
+                if native_balance > gas_reserve:
+                    native_amount = self.convert_from_wei(native_balance - gas_reserve, "native")
+                    tokens_with_balance.append(("native", native_amount))
+        except Exception as e:
+            logger.error(f"[{self.account_index}] Failed to get native balance: {str(e)}")
         
         # Kiểm tra số dư các token khác
         for token in AMBIENT_TOKENS:
@@ -209,6 +225,12 @@ class AmbientDex:
                     AMBIENT_TOKENS[token_out.lower()]["address"] if is_native 
                     else AMBIENT_TOKENS[token_in.lower()]["address"]
                 )
+                
+                # Áp dụng phần trăm swap nếu đó là native token
+                if is_native:
+                    percentage = Decimal(str(self.swap_percentage)) / Decimal('100')
+                    amount_in_wei = int(Decimal(str(amount_in_wei)) * percentage)
+                
                 encode_data = abi.encode(
                     ['address', 'address', 'uint16', 'bool', 'bool', 'uint256', 'uint8', 'uint256', 'uint256', 'uint8'],
                     [
@@ -228,18 +250,22 @@ class AmbientDex:
                 cmd_params = abi.encode(['uint16', 'bytes'], [1, encode_data])
                 tx_data = function_selector.hex() + cmd_params.hex()
 
-                gas_estimate = await self.web3.eth.estimate_gas({
-                    'to': AMBIENT_CONTRACT,
-                    'from': self.account.address,
-                    'data': '0x' + tx_data,
-                    'value': amount_in_wei if is_native else 0
-                })
+                try:
+                    gas_estimate = await self.web3.eth.estimate_gas({
+                        'to': AMBIENT_CONTRACT,
+                        'from': self.account.address,
+                        'data': '0x' + tx_data,
+                        'value': amount_in_wei if is_native else 0
+                    })
+                except Exception as gas_error:
+                    logger.warning(f"[{self.account_index}] Gas estimation failed: {str(gas_error)}. Using default gas limit.")
+                    gas_estimate = 210000  # Fallback gas limit
 
                 return {
                     "to": AMBIENT_CONTRACT,
                     "data": '0x' + tx_data,
                     "value": amount_in_wei if is_native else 0,
-                    "gas": int(gas_estimate * 1.1)
+                    "gas": int(gas_estimate * 1.2)  # Increased gas multiplier for better chances
                 }
             except Exception as e:
                 await self._handle_error("generate_swap_data", e)
@@ -259,12 +285,14 @@ class AmbientDex:
                     **tx_data,
                     **gas_params,
                 }
+                
                 signed_txn = self.web3.eth.account.sign_transaction(transaction, self.account.key)
                 tx_hash = await self.web3.eth.send_raw_transaction(signed_txn.raw_transaction)
-                print_step('swap', "Waiting for transaction confirmation...", self.language)
-                receipt = await self.web3.eth.wait_for_transaction_receipt(tx_hash, poll_latency=2)
+                print_step('swap', f"Waiting for transaction confirmation... TX: {EXPLORER_URL}{tx_hash.hex()}", self.language)
+                receipt = await self.web3.eth.wait_for_transaction_receipt(tx_hash, poll_latency=2, timeout=120)
                 if receipt['status'] == 1:
                     logger.success(f"[{self.account_index}] Transaction successful! TX: {EXPLORER_URL}{tx_hash.hex()}")
+                    print_step('swap', f"{Fore.GREEN}✔ Transaction confirmed! TX: {EXPLORER_URL}{tx_hash.hex()}{Style.RESET_ALL}", self.language)
                     return tx_hash.hex()
                 else:
                     raise Exception(f"Transaction failed: {EXPLORER_URL}{tx_hash.hex()}")
@@ -273,24 +301,31 @@ class AmbientDex:
         raise Exception("Transaction execution failed after retries")
 
     async def approve_token(self, token: str, amount: int) -> Optional[str]:
-        """Phê duyệt token cho Ambient DEX."""
+        """Phê duyệt token cho Ambient DEX với MAX_UINT256."""
         for retry in range(ATTEMPTS):
             try:
                 token_contract = self.web3.eth.contract(
                     address=self.web3.to_checksum_address(AMBIENT_TOKENS[token.lower()]["address"]),
                     abi=ERC20_ABI
                 )
+                
+                # Kiểm tra allowance hiện tại
                 current_allowance = await token_contract.functions.allowance(
                     self.account.address, AMBIENT_CONTRACT
                 ).call()
+                
+                # Nếu allowance đã đủ, không cần phê duyệt lại
                 if current_allowance >= amount:
-                    logger.info(f"[{self.account_index}] Allowance sufficient for {token}")
+                    logger.info(f"[{self.account_index}] Allowance sufficient for {token.upper()}: {current_allowance}")
+                    print_step('approve', f"{Fore.GREEN}✔ Allowance already sufficient for {token.upper()}{Style.RESET_ALL}", self.language)
                     return None
 
+                # Sử dụng MAX_UINT256 thay vì số lượng cụ thể
                 nonce = await self.web3.eth.get_transaction_count(self.account.address)
                 gas_params = await self.get_gas_params()
+                
                 approve_tx = await token_contract.functions.approve(
-                    AMBIENT_CONTRACT, amount
+                    AMBIENT_CONTRACT, MAX_UINT256
                 ).build_transaction({
                     'from': self.account.address,
                     'nonce': nonce,
@@ -298,20 +333,22 @@ class AmbientDex:
                     'chainId': 10143,
                     **gas_params,
                 })
+                
                 signed_txn = self.web3.eth.account.sign_transaction(approve_tx, self.account.key)
                 tx_hash = await self.web3.eth.send_raw_transaction(signed_txn.raw_transaction)
-                print_step('approve', f"Approving {self.convert_from_wei(amount, token):.4f} {token.upper()}...", self.language)
-                receipt = await self.web3.eth.wait_for_transaction_receipt(tx_hash, poll_latency=2)
+                print_step('approve', f"Approving {token.upper()} with MAX value...", self.language)
+                receipt = await self.web3.eth.wait_for_transaction_receipt(tx_hash, poll_latency=2, timeout=120)
+                
                 if receipt['status'] == 1:
                     logger.success(f"[{self.account_index}] Approval successful! TX: {EXPLORER_URL}{tx_hash.hex()}")
-                    print_step('approve', f"{Fore.GREEN}✔ Approved! TX: {EXPLORER_URL}{tx_hash.hex()}{Style.RESET_ALL}", self.language)
+                    print_step('approve', f"{Fore.GREEN}✔ Approved with MAX value! TX: {EXPLORER_URL}{tx_hash.hex()}{Style.RESET_ALL}", self.language)
                     return tx_hash.hex()
                 raise Exception("Approval failed")
             except Exception as e:
                 await self._handle_error("approve_token", e)
         raise Exception(f"Failed to approve {token} after retries")
 
-    async def swap(self, percentage_to_swap: float = 100.0, swap_type: str = "regular") -> Optional[str]:
+    async def swap(self, swap_type: str = "regular") -> Optional[str]:
         """Thực hiện swap trên Ambient DEX."""
         for retry in range(ATTEMPTS):
             try:
@@ -346,25 +383,49 @@ class AmbientDex:
                     return "Collection complete"
 
                 else:  # Regular swap
+                    # Memilih token secara acak dari saldo yang tersedia
                     token_in, balance = random.choice(tokens_with_balance)
                     available_out_tokens = list(AMBIENT_TOKENS.keys()) + ["native"]
-                    available_out_tokens.remove(token_in)
+                    if token_in in available_out_tokens:
+                        available_out_tokens.remove(token_in)
                     token_out = random.choice(available_out_tokens)
 
                     if token_in == "native":
-                        percentage = Decimal(str(percentage_to_swap)) / Decimal('100')
-                        amount_wei = int(Decimal(str(self.convert_to_wei(balance, "native"))) * percentage)
+                        # Ambil saldo terbaru native token
+                        native_balance = await self.web3.eth.get_balance(self.account.address)
+                        # Simpan untuk gas
+                        gas_reserve = self.web3.to_wei(0.01, 'ether')
+                        available_balance = max(0, native_balance - gas_reserve)
+                        
+                        # Aplikasikan persentase swap
+                        amount_wei = int(available_balance * self.swap_percentage / 100)
                         amount_token = self.convert_from_wei(amount_wei, "native")
+                        
+                        # Periksa jika jumlah terlalu kecil
+                        if amount_wei <= 0:
+                            print_step('swap', f"{Fore.RED}✘ Amount too small after applying {self.swap_percentage}% to native token{Style.RESET_ALL}", self.language)
+                            return None
                     else:
+                        # Untuk token non-native, gunakan seluruh saldo (atau sisakan sedikit untuk SETH)
                         if token_in.lower() == "seth":
                             leave_amount = random.uniform(0.00001, 0.0001)
                             balance -= leave_amount
+                        
+                        # Aplikasikan persentase swap untuk token non-native
+                        balance = balance * self.swap_percentage / 100
                         amount_wei = self.convert_to_wei(balance, token_in)
                         amount_token = balance
+                        
+                        # Periksa jika jumlah terlalu kecil
+                        if amount_wei <= 0:
+                            print_step('swap', f"{Fore.RED}✘ Amount too small after applying {self.swap_percentage}% to {token_in}{Style.RESET_ALL}", self.language)
+                            return None
+                            
+                        # Approve token
                         await self.approve_token(token_in, amount_wei)
                         await asyncio.sleep(random.uniform(*PAUSE_BETWEEN_SWAPS))
 
-                    print_step('swap', f"Swapping {amount_token:.4f} {token_in.upper()} to {token_out.upper()}...", self.language)
+                    print_step('swap', f"Swapping {amount_token:.6f} {token_in.upper()} to {token_out.upper()}... ({self.swap_percentage}%)", self.language)
                     tx_data = await self.generate_swap_data(token_in, token_out, amount_wei)
                     return await self.execute_transaction(tx_data)
 
@@ -380,7 +441,7 @@ class AmbientDex:
         print_step(action, f"{Fore.RED}✘ Error: {str(error)}. Retrying in {pause:.2f}s{Style.RESET_ALL}", self.language)
         await asyncio.sleep(pause)
 
-async def run(language: str) -> None:
+async def run(language: str, swap_percentage: float = 10) -> None:
     """Chạy script Ambient với nhiều private keys từ pvkey.txt."""
     try:
         with open("pvkey.txt", "r") as f:
@@ -400,6 +461,7 @@ async def run(language: str) -> None:
     print_border("AMBIENT SWAP - MONAD TESTNET", Fore.GREEN)
     print(f"{Fore.GREEN}{'═' * BORDER_WIDTH}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}👥 {'Tài khoản / Accounts'}: {len(private_keys):^76}{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}💹 {'Phần trăm swap / Swap Percentage'}: {swap_percentage}%{Style.RESET_ALL}")
 
     success_count = 0
     async with aiohttp.ClientSession() as session:
@@ -407,12 +469,12 @@ async def run(language: str) -> None:
             wallet_short = Account.from_key(private_key).address[:8] + "..."
             account_msg = f"ACCOUNT {idx}/{len(private_keys)} - {wallet_short}"
             print_border(account_msg, Fore.BLUE)
-            ambient = AmbientDex(idx, private_key, session, language)
+            ambient = AmbientDex(idx, private_key, session, language, swap_percentage)
             logger.info(f"Processing account {idx}/{len(private_keys)}: {ambient.account.address}")
 
             # Thực hiện swap
             try:
-                tx_hash = await ambient.swap(percentage_to_swap=100.0, swap_type="regular")
+                tx_hash = await ambient.swap(swap_type="regular")
                 if tx_hash:
                     success_count += 1
             except Exception as e:
@@ -430,4 +492,17 @@ async def run(language: str) -> None:
     print_completion_message(accounts=len(private_keys), language=language, success_count=success_count)
 
 if __name__ == "__main__":
-    asyncio.run(run("vi"))  # Chạy mặc định với tiếng Anh
+    # Cho phép người dùng nhập phần trăm swap
+    try:
+        swap_percentage = float(input("Enter swap percentage (1-100, default 10): ") or 10)
+        swap_percentage = max(1, min(100, swap_percentage))  # Giới hạn giá trị từ 1-100
+    except ValueError:
+        swap_percentage = 10.0
+        print(f"{Fore.YELLOW}Invalid input, using default: 10%{Style.RESET_ALL}")
+    
+    # Chọn ngôn ngữ
+    language = input("Choose language (vi/en, default vi): ").lower() or "vi"
+    if language not in ["vi", "en"]:
+        language = "vi"
+    
+    asyncio.run(run(language, swap_percentage))

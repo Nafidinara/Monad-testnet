@@ -1,0 +1,51 @@
+# Private keys and sensitive data
+pvkey.txt
+**/pvkey.txt
+address.txt
+**/address.txt
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environment
+venv/
+env/
+ENV/
+.env
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Log files
+*.log
+logs/
+
+# Local configuration
+.local/
+config.json
+config.ini
+settings.json
+
+# Transaction receipts and blockchain data
+receipts/
+blockchain_data/
+node_modules/
+
+# Temporary files
+*.tmp
+*~
+*.bak

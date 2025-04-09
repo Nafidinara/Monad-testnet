@@ -2,9 +2,11 @@ import os
 import asyncio
 import time
 import json
+import random  # Menambahkan import random yang hilang
 from web3 import Web3
 from solcx import compile_standard, install_solc
 from colorama import init, Fore, Style
+from faker import Faker  # Menambahkan import Faker
 
 # Khởi tạo colorama
 init(autoreset=True)
@@ -118,7 +120,7 @@ async def deploy_contract(private_key, token_name, token_symbol, language):
         contract = w3.eth.contract(abi=abi, bytecode=bytecode)
         tx = contract.constructor().build_transaction({
             'from': account.address,
-            'gas': 2000000,
+            'gas': 850000,
             'gasPrice': w3.eth.gas_price,
             'nonce': nonce,
         })
@@ -147,6 +149,9 @@ async def run_deploy_cycle(cycles, private_keys, language):
         'vi': "VÒNG LẶP DEPLOY CONTRACT / CONTRACT DEPLOY CYCLE",
         'en': "CONTRACT DEPLOY CYCLE"
     }[language]
+    
+    # Inisialisasi Faker
+    fake = Faker()
 
     for account_idx, private_key in enumerate(private_keys, 1):
         wallet = w3.eth.account.from_key(private_key).address[:8] + "..."
@@ -155,12 +160,16 @@ async def run_deploy_cycle(cycles, private_keys, language):
         for i in range(cycles):
             print_border(f"🔄 {lang} {i + 1}/{cycles} | {wallet}", Fore.CYAN)
             
-            token_name = input(f"{Fore.GREEN}➤ {'Nhập tên token (VD: Thog Token): ' if language == 'vi' else 'Enter the token name (e.g., Thog Token): '}{Style.RESET_ALL}")
-            token_symbol = input(f"{Fore.GREEN}➤ {'Nhập ký hiệu token (VD: THOG): ' if language == 'vi' else 'Enter the token symbol (e.g., THOG): '}{Style.RESET_ALL}")
+            # Menggunakan Faker untuk nama orang
+            person_name = fake.name()
+            token_name = f"{person_name} Token"
+            # Mengambil 3 huruf pertama dan ubah ke huruf besar
+            token_symbol = person_name.replace(' ', '')[:3].upper()
             
-            if not token_name or not token_symbol:
-                print(f"{Fore.RED}❌ Tên hoặc ký hiệu token không hợp lệ!{Style.RESET_ALL}")
-                continue
+            print(f"{Fore.GREEN}➤ {'Nama token' if language == 'vi' else 'Token name'}: {Fore.CYAN}{token_name}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}➤ {'Ký hiệu token' if language == 'vi' else 'Token symbol'}: {Fore.CYAN}{token_symbol}{Style.RESET_ALL}")
+            
+            # Tidak perlu validasi karena token_name dan token_symbol selalu ada
 
             await deploy_contract(private_key, token_name, token_symbol, language)
             
@@ -184,6 +193,21 @@ async def run(language):
     print(f"{Fore.GREEN}│ {'DEPLOY CONTRACT - MONAD TESTNET':^56} │{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'═' * 60}{Style.RESET_ALL}")
 
+    # Periksa jika Faker terinstall
+    try:
+        from faker import Faker
+        fake_test = Faker()
+    except ImportError:
+        print(f"{Fore.YELLOW}⚠️ Faker library tidak ditemukan. Menginstall...{Style.RESET_ALL}")
+        try:
+            import pip
+            pip.main(['install', 'faker'])
+            print(f"{Fore.GREEN}✔ Faker berhasil diinstall{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}❌ Gagal menginstall Faker: {str(e)}{Style.RESET_ALL}")
+            print(f"{Fore.RED}❌ Silakan install manual dengan menjalankan 'pip install faker'{Style.RESET_ALL}")
+            return
+
     private_keys = load_private_keys('pvkey.txt')
     if not private_keys:
         return
@@ -206,4 +230,4 @@ async def run(language):
     await run_deploy_cycle(cycles, private_keys, language)
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    asyncio.run(run('en'))

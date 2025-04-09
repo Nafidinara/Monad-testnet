@@ -17,6 +17,8 @@ RPC_URLS = [
 EXPLORER_URL = "https://testnet.monadexplorer.com/tx/0x"
 UNISWAP_V2_ROUTER_ADDRESS = "0xCa810D095e90Daae6e867c19DF6D9A8C56db2c89"
 WETH_ADDRESS = "0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701"
+# Constants (tambahkan baris ini setelah deklarasi RPC_URLS)
+MAX_UINT256 = 2**256 - 1  # Nilai maksimum untuk approve
 
 # Danh sách token hỗ trợ
 TOKEN_ADDRESSES = {
@@ -31,7 +33,17 @@ TOKEN_ADDRESSES = {
 # ABI cho ERC20 token
 ERC20_ABI = [
     {"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"},
-    {"constant": False, "inputs": [{"name": "_spender", "type": "address"}, {"name": "_value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"}
+    {"constant": False, "inputs": [{"name": "_spender", "type": "address"}, {"name": "_value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"},
+    {
+        "inputs": [
+            {"internalType": "address", "name": "owner", "type": "address"},
+            {"internalType": "address", "name": "spender", "type": "address"},
+        ],
+        "name": "allowance",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    }
 ]
 
 # ABI cho Uniswap V2 Router
@@ -115,7 +127,7 @@ def get_random_eth_amount():
 
 # Tạo delay ngẫu nhiên (1-3 phút)
 def get_random_delay():
-    return random.randint(60, 180)  # Trả về giây
+    return random.randint(10, 30)  # Trả về giây
 
 # Hàm retry khi gặp lỗi 429
 async def retry_on_429(operation, max_retries=3, base_delay=2):
@@ -144,9 +156,15 @@ async def approve_token(private_key, token_address, amount, token_symbol, langua
         balance = token_contract.functions.balanceOf(account.address).call()
         if balance < amount:
             raise ValueError(f"Số dư {token_symbol} không đủ: {balance / 10**18} < {amount / 10**18}")
+        
+        # Cek allowance sebelum approve
+        current_allowance = token_contract.functions.allowance(account.address, UNISWAP_V2_ROUTER_ADDRESS).call()
+        if current_allowance >= amount:
+            print_step('approve', f"{Fore.GREEN}✔ Allowance sudah cukup untuk {token_symbol}{Style.RESET_ALL}", language)
+            return  # Tidak perlu approve lagi
 
         print_step('approve', lang['approving'], language)
-        tx = token_contract.functions.approve(UNISWAP_V2_ROUTER_ADDRESS, amount).build_transaction({
+        tx = token_contract.functions.approve(UNISWAP_V2_ROUTER_ADDRESS, MAX_UINT256).build_transaction({
             'from': account.address,
             'gas': 150000,
             'gasPrice': w3.eth.gas_price,
@@ -189,7 +207,7 @@ async def swap_eth_for_tokens(private_key, token_address, amount_in_wei, token_s
         ).build_transaction({
             'from': account.address,
             'value': amount_in_wei,
-            'gas': 300000,
+            'gas': 180000,
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -237,7 +255,7 @@ async def swap_tokens_for_eth(private_key, token_address, token_symbol, language
             balance, 0, [token_address, WETH_ADDRESS], account.address, int(time.time()) + 600
         ).build_transaction({
             'from': account.address,
-            'gas': 300000,
+            'gas': 180000,
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -352,4 +370,4 @@ async def run(language):
     await run_swap_cycle(cycles, private_keys, language)
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    asyncio.run(run('en'))

@@ -63,10 +63,12 @@ LANG = {
         'tx_rejected': 'Giao dịch bị từ chối bởi hợp đồng hoặc mạng',
         'choice_prompt': 'Chọn hành động [1: Faucet USDC | 2: Faucet USDT | 3: Stake USDC | 4: Stake USDT]:',
         'invalid_choice': 'Lựa chọn không hợp lệ',
+        'auto_selected': 'Đã chọn tự động',
         'already_fauceted': 'Ví này đã faucet rồi! Vui lòng không thực hiện lại.',
     },
     'en': {
         'title': 'MULTIPLIFI STAKING - MONAD TESTNET',
+        'auto_selected': 'Auto-selected',
         'info': 'Info',
         'found': 'Found',
         'wallets': 'wallets',
@@ -196,151 +198,199 @@ def check_token_balance(w3: Web3, address: str, token_address: str, decimals: in
         print(f"{Fore.YELLOW}  ⚠ {LANG[language]['error']}: {str(e)}{Style.RESET_ALL}")
         return 0, 0
 
-# Hàm thực hiện faucet
-async def faucet(w3: Web3, private_key: str, token_type: str, language: str = 'en'):
-    account = Account.from_key(private_key)
-    sender_address = Web3.to_checksum_address(account.address)
+def get_auto_action(w3, address, language):
+    # Cek balance token
+    usdc_balance_wei, usdc_balance = check_token_balance(w3, address, USDC_CONTRACT_ADDRESS, language=language)
+    usdt_balance_wei, usdt_balance = check_token_balance(w3, address, USDT_CONTRACT_ADDRESS, language=language)
+
+    available_actions = []
     
-    token_name = "USDC" if token_type == "USDC" else "USDT"
+    # Jika balance token sangat rendah, prioritaskan faucet
+    if usdc_balance < 0.1:
+        available_actions.append(1)  # Faucet USDC
+    if usdt_balance < 0.1:
+        available_actions.append(2)  # Faucet USDT
     
-    print_border(f"Faucet {token_name}: {FAUCET_CONTRACT_ADDRESS}", Fore.YELLOW)
-    print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']}{Style.RESET_ALL}")
+    # Jika ada balance, pertimbangkan untuk stake
+    if usdc_balance > 0:
+        available_actions.append(3)  # Stake USDC
+    if usdt_balance > 0:
+        available_actions.append(4)  # Stake USDT
     
-    payload = ("0x32f289cf000000000000000000000000924f1bf31b19a7f9695f3fc6c69c2ba668ea4a0a" if token_type == "USDC" else
-               "0x32f289cf0000000000000000000000009ebcd0ab11d930964f8ad66425758e65c53a7df1")
-    nonce = w3.eth.get_transaction_count(sender_address, 'pending')
+    # Jika tidak ada action yang tersedia (sangat jarang terjadi), default ke faucet
+    if not available_actions:
+        available_actions = [1, 2]
     
-    tx_params = {
-        "from": sender_address,
-        "to": FAUCET_CONTRACT_ADDRESS,
-        "value": 0,
-        "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
-        "nonce": nonce,
-        "data": payload,
-        "chainId": CHAIN_ID,
+    # Pilih acak dari action yang tersedia
+    action = random.choice(available_actions)
+    
+    action_names = {
+        1: "Faucet USDC",
+        2: "Faucet USDT",
+        3: f"Stake {usdc_balance:.4f} USDC",
+        4: f"Stake {usdt_balance:.4f} USDT"
     }
     
+    return action, action_names[action]
+
+# Hàm thực hiện faucet
+async def faucet(w3: Web3, private_key: str, token_type: str, language: str = 'en'):
     try:
-        estimated_gas = w3.eth.estimate_gas(tx_params)
-        tx_params['gas'] = int(estimated_gas * 1.2)
-    except Exception as e:
-        tx_params['gas'] = DEFAULT_GAS
-        print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
-    
-    print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']}{Style.RESET_ALL}")
-    signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
-    
-    try:
-        receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
-        if receipt.status == 1:
-            print(f"{Fore.GREEN}  ✔ {LANG[language]['success_faucet'].format(token=token_name)} │ Tx: {tx_link}{Style.RESET_ALL}")
-            return True
-        else:
-            print(f"{Fore.RED}  ✖ {LANG[language]['already_fauceted']} │ Tx: {tx_link}{Style.RESET_ALL}")
+        account = Account.from_key(private_key)
+        sender_address = Web3.to_checksum_address(account.address)
+        
+        token_name = "USDC" if token_type == "USDC" else "USDT"
+        
+        print_border(f"Faucet {token_name}: {FAUCET_CONTRACT_ADDRESS}", Fore.YELLOW)
+        print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']}{Style.RESET_ALL}")
+        
+        payload = ("0x32f289cf000000000000000000000000924f1bf31b19a7f9695f3fc6c69c2ba668ea4a0a" if token_type == "USDC" else
+                  "0x32f289cf0000000000000000000000009ebcd0ab11d930964f8ad66425758e65c53a7df1")
+        nonce = w3.eth.get_transaction_count(sender_address, 'pending')
+        
+        tx_params = {
+            "from": sender_address,
+            "to": FAUCET_CONTRACT_ADDRESS,
+            "value": 0,
+            "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
+            "nonce": nonce,
+            "data": payload,
+            "chainId": CHAIN_ID,
+        }
+        
+        try:
+            estimated_gas = w3.eth.estimate_gas(tx_params)
+            tx_params['gas'] = int(estimated_gas * 1.2)
+        except Exception as e:
+            tx_params['gas'] = DEFAULT_GAS
+            print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
+        
+        print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']}{Style.RESET_ALL}")
+        signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
+        
+        try:
+            receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
+            if receipt.status == 1:
+                print(f"{Fore.GREEN}  ✔ {LANG[language]['success_faucet'].format(token=token_name)} │ Tx: {tx_link}{Style.RESET_ALL}")
+                return True
+            else:
+                print(f"{Fore.RED}  ✖ {LANG[language]['already_fauceted']} │ Tx: {tx_link}{Style.RESET_ALL}")
+                return False
+        except Exception as e:
+            print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
             return False
-    except Exception as e:
-        print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
+    except Exception as general_error:
+        print(f"{Fore.RED}  ✖ {LANG[language]['error']}: {str(general_error)}{Style.RESET_ALL}")
         return False
+
 
 # Hàm stake token (USDC hoặc USDT)
 async def stake_token(w3: Web3, private_key: str, token_type: str, language: str = 'en'):
-    account = Account.from_key(private_key)
-    sender_address = Web3.to_checksum_address(account.address)
-    
-    token_address = USDC_CONTRACT_ADDRESS if token_type == "USDC" else USDT_CONTRACT_ADDRESS
-    token_name = "USDC" if token_type == "USDC" else "USDT"
-    
-    # Kiểm tra số dư token
-    print_border(f"Stake {token_name}: {token_address}", Fore.YELLOW)
-    print(f"{Fore.CYAN}  > {LANG[language]['checking_balance']}{Style.RESET_ALL}")
-    balance_wei, balance = check_token_balance(w3, sender_address, token_address, language=language)
-    if balance == 0:
-        print(f"{Fore.RED}  ✖ {LANG[language]['insufficient_balance']}: 0 {token_name}{Style.RESET_ALL}")
-        return False
-    print(f"{Fore.YELLOW}    {LANG[language][f'{token_name.lower()}_balance']}: {balance:.6f} {token_name}{Style.RESET_ALL}")
-    
-    # Step 1: Approve
-    print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']} (Approve){Style.RESET_ALL}")
-    approve_payload = "0x095ea7b3000000000000000000000000bcf1415bd456edb3a94c9d416f9298ecf9a2cdd0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    nonce = w3.eth.get_transaction_count(sender_address, 'pending')
-    
-    tx_params = {
-        "from": sender_address,
-        "to": token_address,
-        "value": 0,
-        "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
-        "nonce": nonce,
-        "data": approve_payload,
-        "chainId": CHAIN_ID,
-    }
-    
     try:
-        estimated_gas = w3.eth.estimate_gas(tx_params)
-        tx_params['gas'] = int(estimated_gas * 1.2)
-    except Exception as e:
-        tx_params['gas'] = DEFAULT_GAS
-        print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
-    
-    print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']} (Approve){Style.RESET_ALL}")
-    signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
-    
-    try:
-        receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
-        if receipt.status != 1:
-            print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason='Approve failed')} │ Tx: {tx_link}{Style.RESET_ALL}")
+        account = Account.from_key(private_key)
+        sender_address = Web3.to_checksum_address(account.address)
+        
+        token_address = USDC_CONTRACT_ADDRESS if token_type == "USDC" else USDT_CONTRACT_ADDRESS
+        token_name = "USDC" if token_type == "USDC" else "USDT"
+        
+        # Kiểm tra số dư token
+        print_border(f"Stake {token_name}: {token_address}", Fore.YELLOW)
+        print(f"{Fore.CYAN}  > {LANG[language]['checking_balance']}{Style.RESET_ALL}")
+        balance_wei, balance = check_token_balance(w3, sender_address, token_address, language=language)
+        if balance == 0:
+            print(f"{Fore.RED}  ✖ {LANG[language]['insufficient_balance']}: 0 {token_name}{Style.RESET_ALL}")
             return False
-        print(f"{Fore.GREEN}  ✔ {LANG[language]['success_approve'].format(token=token_name)} │ Tx: {tx_link}{Style.RESET_ALL}")
-    except Exception as e:
-        print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
-        return False
-    
-    # Tạm nghỉ trước khi deposit
-    delay = random.uniform(5, 15)
-    print(f"{Fore.YELLOW}    {LANG[language]['pausing']} {delay:.2f} {'giây' if language == 'vi' else 'seconds'}{Style.RESET_ALL}")
-    await asyncio.sleep(delay)
-    
-    # Step 2: Deposit
-    print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']} (Deposit){Style.RESET_ALL}")
-    amount_hex = hex(int(balance_wei))[2:].zfill(64)
-    deposit_payload = (f"0x47e7ef24000000000000000000000000{token_address[2:].lower()}{amount_hex}" if token_type == "USDC" else
-                       f"0x47e7ef240000000000000000000000009ebcd0ab11d930964f8ad66425758e65c53a7df1{amount_hex}")
-    
-    tx_params = {
-        "from": sender_address,
-        "to": STAKING_CONTRACT_ADDRESS,
-        "value": 0,
-        "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
-        "nonce": nonce + 1,
-        "data": deposit_payload,
-        "chainId": CHAIN_ID,
-    }
-    
-    try:
-        estimated_gas = w3.eth.estimate_gas(tx_params)
-        tx_params['gas'] = int(estimated_gas * 1.2)
-    except Exception as e:
-        tx_params['gas'] = DEFAULT_GAS
-        print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
-    
-    print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']} (Deposit){Style.RESET_ALL}")
-    signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
-    
-    try:
-        receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
-        if receipt.status == 1:
-            print(f"{Fore.GREEN}  ✔ {LANG[language]['success_deposit'].format(amount=balance, token=token_name)} │ Tx: {tx_link}{Style.RESET_ALL}")
-            return True
-        else:
-            print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason='Deposit failed')} │ Tx: {tx_link}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}    {LANG[language][f'{token_name.lower()}_balance']}: {balance:.6f} {token_name}{Style.RESET_ALL}")
+        
+        # Step 1: Approve
+        print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']} (Approve){Style.RESET_ALL}")
+        approve_payload = "0x095ea7b3000000000000000000000000bcf1415bd456edb3a94c9d416f9298ecf9a2cdd0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        nonce = w3.eth.get_transaction_count(sender_address, 'pending')
+        
+        tx_params = {
+            "from": sender_address,
+            "to": token_address,
+            "value": 0,
+            "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
+            "nonce": nonce,
+            "data": approve_payload,
+            "chainId": CHAIN_ID,
+        }
+        
+        try:
+            estimated_gas = w3.eth.estimate_gas(tx_params)
+            tx_params['gas'] = int(estimated_gas * 1.2)
+        except Exception as e:
+            tx_params['gas'] = DEFAULT_GAS
+            print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
+        
+        print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']} (Approve){Style.RESET_ALL}")
+        signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
+        
+        try:
+            receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
+            if receipt.status != 1:
+                print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason='Approve failed')} │ Tx: {tx_link}{Style.RESET_ALL}")
+                return False
+            print(f"{Fore.GREEN}  ✔ {LANG[language]['success_approve'].format(token=token_name)} │ Tx: {tx_link}{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
             return False
-    except Exception as e:
-        print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
+        
+        # Tạm nghỉ trước khi deposit
+        delay = random.uniform(5, 15)
+        print(f"{Fore.YELLOW}    {LANG[language]['pausing']} {delay:.2f} {'giây' if language == 'vi' else 'seconds'}{Style.RESET_ALL}")
+        await asyncio.sleep(delay)
+        
+        # Step 2: Deposit
+        try:
+            print(f"{Fore.CYAN}  > {LANG[language]['preparing_tx']} (Deposit){Style.RESET_ALL}")
+            amount_hex = hex(int(balance_wei))[2:].zfill(64)
+            deposit_payload = (f"0x47e7ef24000000000000000000000000{token_address[2:].lower()}{amount_hex}" if token_type == "USDC" else
+                            f"0x47e7ef240000000000000000000000009ebcd0ab11d930964f8ad66425758e65c53a7df1{amount_hex}")
+            
+            tx_params = {
+                "from": sender_address,
+                "to": STAKING_CONTRACT_ADDRESS,
+                "value": 0,
+                "gasPrice": int(w3.eth.gas_price * random.uniform(1.03, 1.1)),
+                "nonce": nonce + 1,
+                "data": deposit_payload,
+                "chainId": CHAIN_ID,
+            }
+            
+            try:
+                estimated_gas = w3.eth.estimate_gas(tx_params)
+                tx_params['gas'] = int(estimated_gas * 1.2)
+            except Exception as e:
+                tx_params['gas'] = DEFAULT_GAS
+                print(f"{Fore.YELLOW}    {LANG[language]['gas_estimation_failed']}: {str(e)}. {LANG[language]['default_gas_used'].format(gas=DEFAULT_GAS)}{Style.RESET_ALL}")
+            
+            print(f"{Fore.CYAN}  > {LANG[language]['sending_tx']} (Deposit){Style.RESET_ALL}")
+            signed_tx = w3.eth.account.sign_transaction(tx_params, private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            tx_link = f"{EXPLORER_URL}{tx_hash.hex()}"
+            
+            try:
+                receipt = await asyncio.get_event_loop().run_in_executor(None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180))
+                if receipt.status == 1:
+                    print(f"{Fore.GREEN}  ✔ {LANG[language]['success_deposit'].format(amount=balance, token=token_name)} │ Tx: {tx_link}{Style.RESET_ALL}")
+                    return True
+                else:
+                    print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason='Deposit failed')} │ Tx: {tx_link}{Style.RESET_ALL}")
+                    return False
+            except Exception as e:
+                print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=str(e))} │ Tx: {tx_link}{Style.RESET_ALL}")
+                return False
+        except Exception as deposit_error:
+            print(f"{Fore.RED}  ✖ {LANG[language]['failure'].format(reason=f'Deposit error: {str(deposit_error)}')}{Style.RESET_ALL}")
+            return False
+    except Exception as general_error:
+        print(f"{Fore.RED}  ✖ {LANG[language]['error']}: {str(general_error)}{Style.RESET_ALL}")
         return False
 
 # Hàm chính
@@ -364,37 +414,41 @@ async def run(language: str = 'en'):
 
     random.shuffle(private_keys)
     for i, (profile_num, private_key) in enumerate(private_keys, 1):
-        print_border(f"{LANG[language]['processing_wallet']} {profile_num} ({i}/{len(private_keys)})", Fore.MAGENTA)
-        account = Account.from_key(private_key)
-        print(f"{Fore.YELLOW}  {LANG[language]['address']}: {account.address}{Style.RESET_ALL}")
-        print_separator()
+        try:
+            print_border(f"{LANG[language]['processing_wallet']} {profile_num} ({i}/{len(private_keys)})", Fore.MAGENTA)
+            account = Account.from_key(private_key)
+            print(f"{Fore.YELLOW}  {LANG[language]['address']}: {account.address}{Style.RESET_ALL}")
+            
+            # Tampilkan saldo
+            _, usdc_balance = check_token_balance(w3, account.address, USDC_CONTRACT_ADDRESS, language=language)
+            _, usdt_balance = check_token_balance(w3, account.address, USDT_CONTRACT_ADDRESS, language=language)
+            print(f"{Fore.YELLOW}  USDC {LANG[language]['balance']}: {usdc_balance:.6f}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}  USDT {LANG[language]['balance']}: {usdt_balance:.6f}{Style.RESET_ALL}")
+            print_separator()
 
-        print()
-        while True:
-            print(f"{Fore.CYAN}{LANG[language]['choice_prompt']}{Style.RESET_ALL}")
-            choice = input(f"{Fore.GREEN}  > {Style.RESET_ALL}")
-            if choice in ['1', '2', '3', '4']:
-                break
-            print(f"{Fore.RED}  ✖ {LANG[language]['invalid_choice']}{Style.RESET_ALL}")
+            # Otomatis memilih action
+            action, action_name = get_auto_action(w3, account.address, language)
+            print(f"{Fore.CYAN}  Auto-selected: {action_name}{Style.RESET_ALL}")
+            print()
 
-        print()
-        if choice == '1':
             total_actions += 1
-            if await faucet(w3, private_key, "USDC", language):
-                successful_actions += 1
-        elif choice == '2':
-            total_actions += 1
-            if await faucet(w3, private_key, "USDT", language):
-                successful_actions += 1
-        elif choice == '3':
-            total_actions += 1
-            if await stake_token(w3, private_key, "USDC", language):
-                successful_actions += 1
-        elif choice == '4':
-            total_actions += 1
-            if await stake_token(w3, private_key, "USDT", language):
-                successful_actions += 1
+            if action == 1:
+                if await faucet(w3, private_key, "USDC", language):
+                    successful_actions += 1
+            elif action == 2:
+                if await faucet(w3, private_key, "USDT", language):
+                    successful_actions += 1
+            elif action == 3:
+                if await stake_token(w3, private_key, "USDC", language):
+                    successful_actions += 1
+            elif action == 4:
+                if await stake_token(w3, private_key, "USDT", language):
+                    successful_actions += 1
 
+        except Exception as wallet_error:
+            print_border(f"Wallet error: {str(wallet_error)}", Fore.RED)
+            continue  # Lanjut ke wallet berikutnya
+            
         if i < len(private_keys):
             delay = random.uniform(10, 30)
             print(f"{Fore.YELLOW}  ℹ {LANG[language]['pausing']} {delay:.2f} {'giây' if language == 'vi' else 'seconds'}{Style.RESET_ALL}")
@@ -406,4 +460,4 @@ async def run(language: str = 'en'):
     print()
 
 if __name__ == "__main__":
-    asyncio.run(run_multiplifi('en'))
+    asyncio.run(run('en'))

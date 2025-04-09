@@ -70,7 +70,7 @@ def get_random_amount():
 
 # Tạo delay ngẫu nhiên (1-3 phút)
 def get_random_delay():
-    return random.randint(60, 180)  # Trả về giây
+    return random.randint(10, 30)  # Trả về giây
 
 # Hàm Stake MON
 async def stake_mon(private_key, amount, language, cycle):
@@ -100,7 +100,7 @@ async def stake_mon(private_key, amount, language, cycle):
         tx = contract.functions.stake().build_transaction({
             'from': account.address,
             'value': amount,
-            'gas': 500000,  # Tăng gas limit lên 600,000
+            'gas': 165000,  # Tăng gas limit lên 600,000
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         })
@@ -150,7 +150,7 @@ async def unstake_mon(private_key, amount, language, cycle):
             'to': KITSU_STAKING_CONTRACT,
             'from': account.address,
             'data': "0x30af6b2e" + w3.to_hex(amount)[2:].zfill(64),
-            'gas': 500000,  # Tăng gas limit lên 600,000
+            'gas': 200000,  # Tăng gas limit lên 600,000
             'gasPrice': w3.eth.gas_price,
             'nonce': w3.eth.get_transaction_count(account.address),
         }
@@ -241,4 +241,4 @@ async def run(language):
     await run_staking_cycle(cycles, private_keys, language)
 
 if __name__ == "__main__":
-    asyncio.run(run('vi'))
+    asyncio.run(run('en'))
